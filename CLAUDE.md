@@ -157,30 +157,42 @@ ACCESS_TOKEN_EXPIRE_MINUTES=480
 
 ---
 
-## Adding a New Column (SQLite — local dev only)
+## Adding a New Column
 
-SQLAlchemy `create_all` does NOT add columns to existing tables. Run manually:
+SQLAlchemy `create_all` does NOT add columns to existing tables — only creates tables that don't exist yet.
 
+**Local (SQLite):**
 ```bash
 sqlite3 backend/erp.db "ALTER TABLE <table> ADD COLUMN <col> <type>;"
 ```
 
-In production (PostgreSQL/Neon), the column must exist before deploying — either add it via Neon's SQL editor or use a migration tool (Alembic).
+**Production (Neon) — do this BEFORE pushing code:**
+1. Neon dashboard → your project → **SQL Editor**
+2. Run: `ALTER TABLE <table> ADD COLUMN <col> <type>;`
+3. Then push your code changes
+
+If you push first and deploy before running the migration, the app will crash.
 
 ---
 
 ## Deployment (Render + Neon)
 
-- **Web service**: Render free tier (`render.yaml`) — builds frontend into `backend/static/`, serves everything from FastAPI
-- **Database**: Neon free PostgreSQL — set `DATABASE_URL` manually in Render dashboard
-- **Keep-alive**: UptimeRobot pings the Render URL every 5 min to prevent the free tier from sleeping
+- **Web service**: Render free tier — Python 3.11.9 (pinned via `.python-version`)
+- **Database**: Neon free PostgreSQL — never expires, 0.5GB limit (years of runway at current volume)
+- **Keep-alive**: UptimeRobot pings `https://appliances4less-erp.onrender.com` every 5 min to prevent free tier sleep
 - On first boot, `create_all()` in `main.py` creates all tables automatically
+- Vite builds frontend directly into `backend/static/` — FastAPI serves it for all non-API routes
 
-Build flow (Render):
-1. `pip install -r backend/requirements.txt`
-2. `cd frontend && npm install && npm run build` → outputs to `frontend/dist/`
-3. Build script copies `frontend/dist/` → `backend/static/`
-4. FastAPI serves `backend/static/index.html` for all non-API routes
+**Environment variables set in Render dashboard:**
+| Key | Value |
+|---|---|
+| `DATABASE_URL` | Neon connection string (`postgresql://...`) |
+| `SECRET_KEY` | Random hex string — **save this somewhere safe** (if you ever delete and recreate the Render service, regenerate with `python3 -c "import secrets; print(secrets.token_hex(32))"` and update Render) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` |
+
+**If you delete and recreate the Render service:** all logged-in users get signed out (new SECRET_KEY invalidates old JWTs). Not a data loss — just a forced logout.
+
+**UptimeRobot setup:** [uptimerobot.com](https://uptimerobot.com) → New Monitor → HTTP(S) → URL: `https://appliances4less-erp.onrender.com` → Interval: 5 minutes
 
 ---
 
