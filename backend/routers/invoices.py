@@ -4,42 +4,30 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from database import get_db
 import models, schemas
-from auth import get_current_user
 from pdf import generate_invoice_pdf
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
+SYSTEM_USER_ID = 1
+
 
 @router.get("/", response_model=list[schemas.InvoiceOut])
-def list_invoices(
-    store_id: int | None = None,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def list_invoices(store_id: int | None = None, db: Session = Depends(get_db)):
     query = db.query(models.Invoice)
-    if current_user.role != "admin":
-        query = query.filter(models.Invoice.store_id == current_user.store_id)
-    elif store_id:
+    if store_id:
         query = query.filter(models.Invoice.store_id == store_id)
     return query.order_by(models.Invoice.created_at.desc()).all()
 
 
 @router.post("/", response_model=schemas.InvoiceOut, status_code=status.HTTP_201_CREATED)
-def create_invoice(
-    data: schemas.InvoiceCreate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    if current_user.role != "admin" and data.store_id != current_user.store_id:
-        raise HTTPException(status_code=403, detail="Cannot create invoice for another store")
-
+def create_invoice(data: schemas.InvoiceCreate, db: Session = Depends(get_db)):
     subtotal = sum(li.quantity * li.unit_price for li in data.line_items)
     tax_amount = round(subtotal * (data.tax_rate / 100), 2)
     total = round(subtotal + tax_amount + data.delivery_fee, 2)
 
     invoice = models.Invoice(
         store_id=data.store_id,
-        created_by=current_user.id,
+        created_by=SYSTEM_USER_ID,
         customer_name=data.customer_name,
         customer_address=data.customer_address,
         customer_phone=data.customer_phone,
@@ -90,30 +78,18 @@ def create_invoice(
 
 
 @router.get("/{invoice_id}", response_model=schemas.InvoiceOut)
-def get_invoice(
-    invoice_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if current_user.role != "admin" and invoice.store_id != current_user.store_id:
-        raise HTTPException(status_code=403, detail="Access denied")
     return invoice
 
 
 @router.get("/{invoice_id}/pdf")
-def download_invoice_pdf(
-    invoice_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def download_invoice_pdf(invoice_id: int, db: Session = Depends(get_db)):
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if current_user.role != "admin" and invoice.store_id != current_user.store_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     store = db.query(models.Store).filter(models.Store.id == invoice.store_id).first()
     pdf_bytes = generate_invoice_pdf(invoice, store)
@@ -126,16 +102,10 @@ def download_invoice_pdf(
 
 
 @router.delete("/{invoice_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_invoice(
-    invoice_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    if current_user.role != "admin" and invoice.store_id != current_user.store_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     for line in invoice.line_items:
         if line.item_id:

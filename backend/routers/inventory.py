@@ -3,17 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, s
 from sqlalchemy.orm import Session
 from database import get_db
 import models, schemas
-from auth import get_current_user
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 
 
 @router.get("/", response_model=list[schemas.ItemOut])
-def list_items(
-    store_id: int | None = None,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def list_items(store_id: int | None = None, db: Session = Depends(get_db)):
     query = db.query(models.Item)
     if store_id:
         query = query.filter(models.Item.store_id == store_id)
@@ -21,11 +16,7 @@ def list_items(
 
 
 @router.post("/", response_model=schemas.ItemOut, status_code=status.HTTP_201_CREATED)
-def create_item(
-    data: schemas.ItemCreate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def create_item(data: schemas.ItemCreate, db: Session = Depends(get_db)):
     item = models.Item(**data.model_dump())
     db.add(item)
     db.commit()
@@ -34,12 +25,7 @@ def create_item(
 
 
 @router.patch("/{item_id}", response_model=schemas.ItemOut)
-def update_item(
-    item_id: int,
-    data: schemas.ItemUpdate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def update_item(item_id: int, data: schemas.ItemUpdate, db: Session = Depends(get_db)):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -51,11 +37,7 @@ def update_item(
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_item(
-    item_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+def delete_item(item_id: int, db: Session = Depends(get_db)):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -68,7 +50,6 @@ async def import_items_xlsx(
     store_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
 ):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="File must be .xlsx or .xls")
@@ -97,7 +78,6 @@ async def import_items_xlsx(
     if header_row_idx is None:
         raise HTTPException(status_code=400, detail="Could not find header row with MODELS/SERIALS columns")
 
-    # Column index helpers
     def col(names: list[str]):
         for n in names:
             if n in headers:
@@ -126,7 +106,6 @@ async def import_items_xlsx(
         model_val = str(row[idx_model]).strip() if idx_model is not None and row[idx_model] else None
         serial_val = str(row[idx_serial]).strip() if idx_serial is not None and row[idx_serial] else None
 
-        # Skip blank rows
         if not model_val or model_val in ("None", ""):
             skipped += 1
             continue
@@ -146,7 +125,6 @@ async def import_items_xlsx(
         msrp_val  = to_float(idx_msrp)
         store_val = to_float(idx_store)
 
-        # Use Details as name if available, else fall back to Description
         name = (detail_val or desc_val or model_val)[:255]
 
         item = models.Item(
@@ -156,8 +134,8 @@ async def import_items_xlsx(
             model_number=model_val,
             serial_number=serial_val,
             load_number=load_val,
-            sale_price=msrp_val,    # MSRP = what customer pays
-            cost_price=store_val,   # Store Price = what store paid
+            sale_price=msrp_val,
+            cost_price=store_val,
             location=store.name,
             is_in_stock=True,
         )
