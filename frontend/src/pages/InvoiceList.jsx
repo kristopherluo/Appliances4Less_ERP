@@ -35,7 +35,10 @@ export default function InvoiceList() {
 
   const deleteMutation = useMutation({
     mutationFn: (id) => api.delete(`/invoices/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["items"] });
+    },
   });
 
   const minYear = useMemo(() => {
@@ -189,7 +192,7 @@ export default function InvoiceList() {
                         PDF
                       </button>
                       <button
-                        onClick={() => { if (window.confirm("Delete this invoice?")) deleteMutation.mutate(inv.id); }}
+                        onClick={() => { if (window.confirm("Delete this invoice? Any inventory items on this invoice will be restored to in-stock.")) deleteMutation.mutate(inv.id); }}
                         className="text-red-500 hover:underline text-xs"
                       >
                         Delete
