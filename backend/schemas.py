@@ -130,12 +130,13 @@ class InvoiceItemCreate(BaseModel):
     ac_code: Optional[str] = None
     kw_code: Optional[str] = None
     mfr_serial: Optional[str] = None
+    brand: Optional[str] = None
     quantity: int
     unit_price: float
-    warranty_term: Optional[str] = "1 year"
+    warranty_term: Optional[str] = "1year"
     warranty_price: Optional[str] = "$0"
     warranty_id: Optional[str] = ""
-    warranty_provider: Optional[str] = "ONPOINT"
+    warranty_provider: Optional[str] = "NA"
 
 
 class InvoiceItemOut(BaseModel):
@@ -147,6 +148,7 @@ class InvoiceItemOut(BaseModel):
     ac_code: Optional[str]
     kw_code: Optional[str]
     mfr_serial: Optional[str]
+    brand: Optional[str]
     quantity: int
     unit_price: float
     subtotal: float
@@ -160,11 +162,22 @@ class InvoiceItemOut(BaseModel):
 class InvoiceCreate(BaseModel):
     store_id: int
     customer_name: str
-    customer_address: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_email: Optional[str] = None
-    delivery_address: Optional[str] = None
+    salesman: Optional[str] = None
+    delivery_street: Optional[str] = None
+    delivery_city: Optional[str] = None
+    delivery_zip: Optional[str] = None
+    delivery_state: Optional[str] = None
+    invoice_date: Optional[datetime] = None
+    is_split_payment: bool = False
     payment_method: Optional[str] = None
+    payment_1_method: Optional[str] = None
+    payment_1_amount: Optional[float] = None
+    payment_2_method: Optional[str] = None
+    payment_2_amount: Optional[float] = None
+    payment_3_method: Optional[str] = None
+    payment_3_amount: Optional[float] = None
     tax_rate: float = 0.0
     delivery_fee: float = 0.0
     notes: Optional[str] = None
@@ -181,8 +194,21 @@ class InvoiceOut(BaseModel):
     customer_address: Optional[str]
     customer_phone: Optional[str]
     customer_email: Optional[str]
+    salesman: Optional[str]
     delivery_address: Optional[str]
+    delivery_street: Optional[str]
+    delivery_city: Optional[str]
+    delivery_zip: Optional[str]
+    delivery_state: Optional[str]
+    invoice_date: Optional[datetime]
+    is_split_payment: bool
     payment_method: Optional[str]
+    payment_1_method: Optional[str]
+    payment_1_amount: Optional[float]
+    payment_2_method: Optional[str]
+    payment_2_amount: Optional[float]
+    payment_3_method: Optional[str]
+    payment_3_amount: Optional[float]
     tax_rate: float
     delivery_fee: float
     subtotal: float

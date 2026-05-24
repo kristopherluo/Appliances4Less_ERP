@@ -92,6 +92,27 @@ class Invoice(Base):
     tax_amount = Column(Float, default=0.0)
     total_amount = Column(Float, default=0.0)
 
+    # Salesman
+    salesman = Column(String(100), nullable=True)
+
+    # Structured delivery address
+    delivery_street = Column(String(255), nullable=True)
+    delivery_city = Column(String(100), nullable=True)
+    delivery_zip = Column(String(20), nullable=True)
+    delivery_state = Column(String(50), nullable=True)
+
+    # Invoice date (can differ from created_at)
+    invoice_date = Column(DateTime, nullable=True)
+
+    # Split payment
+    is_split_payment = Column(Boolean, default=False)
+    payment_1_method = Column(String(50), nullable=True)
+    payment_1_amount = Column(Float, nullable=True)
+    payment_2_method = Column(String(50), nullable=True)
+    payment_2_amount = Column(Float, nullable=True)
+    payment_3_method = Column(String(50), nullable=True)
+    payment_3_amount = Column(Float, nullable=True)
+
     # Other
     payment_method = Column(String(50), nullable=True)
     notes = Column(Text)
@@ -122,6 +143,9 @@ class InvoiceItem(Base):
     quantity = Column(Integer, nullable=False, default=1)
     unit_price = Column(Float, nullable=False)
     subtotal = Column(Float, nullable=False)
+
+    # Brand snapshot
+    brand = Column(String(100), nullable=True)
 
     # Warranty
     warranty_term = Column(String(100), default="1 year")

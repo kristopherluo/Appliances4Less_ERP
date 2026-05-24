@@ -3,38 +3,16 @@ import models
 
 STORE_NAME = "APPLIANCES 4 LESS"
 
-DELIVERY_TERMS = (
-    "1. Customer or person(s) over the age of 18 was present upon delivery & installation of appliances "
-    "and agree everything was installed correctly without any harm to the house/area of arrival.\n"
-    "2. Customer or person(s) over the age of 18 present for delivery and installation agree that "
-    "Appliances 4 Less cannot be held liable for any damage arising to the house or appliance from "
-    "the use of customers old appliance hookups and hoses, and/or unaccounted or damaged "
-    "outlets/outlets/spots etc."
-)
-
 TERMS_AND_CONDITIONS = (
-    "Scratch and Dent Goods:\n"
-    "- Manufacturer warranty varies by brand. Please refer to the product info above for details on each item.\n"
-    "- Above delivery and service fees are non-refundable. For reasons other than functional issues, customers "
-    "are responsible for sending appliances back to the store by themselves. After the goods are received, the "
-    "payment will be refunded according to the customer's payment method (if customer need merchant pick up the "
-    "returned goods at home, additional shipping fees will be charged). Customers are responsible for any service "
-    "fee / processing fee that may occur during the refund.\n\n"
-    "Warranty within 30 Days After Purchase:\n"
-    "- Customers must register their warranty online by themselves (Go www.cpscentral.com or call 800-905-0443). "
-    "Instructions are found in the pamphlet and warranty sticker. Within the 30 days of purchase, please get in "
-    "touch with the store if anything.\n"
-    "- After 30 days, please contact CPS for service. When initiating a claim, please have the following "
-    "information ready:\n"
-    "  1. Warranty #, which can be found on the top right corner of the warranty sticker\n"
-    "  2. Invoice/Receipt from the store as Proof of Purchase\n"
-    "  3. S/N, which is the KWN on the machine, or other unique numbers as the store told\n\n"
-    "After 30 days:\n"
-    "- Each service request is subject to a $99 deductible. And service includes parts, service, and labor. "
-    "Warranty exceptions are found in the pamphlet. Please read it carefully to understand the benefits. "
-    "Our store is not responsible for issues stated in warranty exceptions.\n"
-    "Warranty Exception:\n"
-    "Please refer to \"What is not covered\" section on your warranty instruction card."
+    "GE AS IS PRODUCTS\n\n"
+    "Warranty within 7 Days After Purchase:\n"
+    "Please contact your store. Above delivery and service fees are not refundable. For reasons other than "
+    "functional issues, customers are responsible for sending appliances back to the store by themselves. "
+    "After the goods are received, the payment will be refunded according to the customer's payment method "
+    "(if customer need merchant pick up the returned goods at home, additional shipping fees will be charged). "
+    "Customers are responsible for any service fee / processing fee that may occur during the refund.\n\n"
+    "After 7 days:\n"
+    "All warranty service will be provided by GE Consumer Service Centers or by GE's authorized CustomerCare."
 )
 
 
@@ -202,11 +180,26 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     pdf.ln(3)
 
     # ── NOTES ─────────────────────────────────────────────────────────────────
-    if invoice.payment_method or invoice.notes or invoice.delivery_address:
+    has_notes = (
+        invoice.payment_method or invoice.notes or invoice.delivery_address or invoice.salesman
+        or invoice.is_split_payment
+    )
+    if has_notes:
         pdf.set_font("Helvetica", "B", 9)
         pdf.cell(0, 5, "Notes:", ln=True)
         pdf.set_font("Helvetica", "", 8)
-        if invoice.payment_method:
+        if invoice.salesman:
+            pdf.cell(0, 4, f"- Sold by: {invoice.salesman}", ln=True)
+        if invoice.is_split_payment:
+            for i, (method, amount) in enumerate([
+                (invoice.payment_1_method, invoice.payment_1_amount),
+                (invoice.payment_2_method, invoice.payment_2_amount),
+                (invoice.payment_3_method, invoice.payment_3_amount),
+            ], start=1):
+                if method or amount:
+                    amt_str = f"${amount:,.2f}" if amount is not None else ""
+                    pdf.cell(0, 4, f"- Payment {i}: {method or ''} {amt_str}".strip(), ln=True)
+        elif invoice.payment_method:
             pdf.cell(0, 4, f"- Payment Method: {invoice.payment_method}", ln=True)
         if invoice.notes:
             for note_line in invoice.notes.splitlines():
@@ -215,28 +208,12 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
             pdf.cell(0, 4, f"- Delivery Address: {invoice.delivery_address}", ln=True)
         pdf.ln(3)
 
-    # ── DELIVERY ACCEPTANCE SIGN OFF ──────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.cell(0, 5, "- DELIVERY ACCEPTANCE SIGN OFF -", ln=True)
-    pdf.set_font("Helvetica", "", 7.5)
-    pdf.multi_cell(0, 4, DELIVERY_TERMS)
-    pdf.ln(4)
-
-    # Highlighted signature line
-    pdf.set_fill_color(255, 255, 0)
-    pdf.set_font("Helvetica", "", 8)
-    sig_y = pdf.get_y()
-    pdf.cell(52, 6, "Delivery Date: _______________", fill=True, ln=False)
-    pdf.cell(70, 6, "Customer Signature: ___________________", fill=True, ln=False)
-    pdf.cell(0, 6, "Delivered by Signature: ______________", fill=True, ln=True)
-    pdf.ln(4)
-
     pdf.line(14, pdf.get_y(), 202, pdf.get_y())
     pdf.ln(3)
 
     # ── TERMS AND CONDITIONS ──────────────────────────────────────────────────
     pdf.set_font("Helvetica", "B", 8)
-    pdf.cell(0, 5, "- TERMS AND CONDITIONS -", ln=True)
+    pdf.cell(0, 5, "- GE AS IS PRODUCTS -", ln=True)
     pdf.set_font("Helvetica", "", 6.5)
     pdf.multi_cell(0, 3.5, TERMS_AND_CONDITIONS)
 

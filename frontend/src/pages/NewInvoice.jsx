@@ -6,13 +6,24 @@ import api from "../lib/api";
 import { useStore } from "../context/StoreContext";
 
 const DEFAULT_WARRANTY = {
-  warranty_term: "1 year",
+  warranty_term: "1year",
   warranty_price: "$0",
   warranty_id: "",
-  warranty_provider: "ONPOINT",
+  warranty_provider: "NA",
 };
 
 const PAYMENT_METHODS = ["Cash", "Debit", "Credit", "Check", "Financing", "Other"];
+const WARRANTY_PROVIDERS = ["NA", "ONPOINT", "CPS", "MANUFACTURE", "STORE", "FRONTIER"];
+
+const FIELD_LABELS = {
+  customer_name: "Name",
+  customer_email: "Email",
+  invoice_date: "Invoice Date",
+  delivery_street: "Delivery Street",
+  delivery_city: "City",
+  delivery_state: "State",
+  delivery_zip: "Zip",
+};
 
 export default function NewInvoice() {
   const navigate = useNavigate();
@@ -23,13 +34,26 @@ export default function NewInvoice() {
     if (stores.length > 0 && !storeId) setStoreId(stores[0].id);
   }, [stores]);
 
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({
-    defaultValues: { tax_rate: 0, delivery_fee: 0 },
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm({
+    defaultValues: {
+      tax_rate: 0,
+      delivery_fee: 0,
+      invoice_date: new Date().toISOString().slice(0, 10),
+    },
   });
 
   const [lineItems, setLineItems] = useState([]);
   const [itemSearch, setItemSearch] = useState("");
   const [error, setError] = useState("");
+  const [splitPayment, setSplitPayment] = useState(false);
+  // payment_method is kept in local state to avoid react-hook-form stale validation when hidden
+  const [singlePaymentMethod, setSinglePaymentMethod] = useState("");
+  const [singlePaymentError, setSinglePaymentError] = useState("");
+  const [payments, setPayments] = useState([
+    { method: "", amount: "0.00" },
+    { method: "", amount: "0.00" },
+    { method: "", amount: "0.00" },
+  ]);
 
   const { data: inventory = [] } = useQuery({
     queryKey: ["items", storeId],
@@ -77,6 +101,7 @@ export default function NewInvoice() {
         ac_code: item.ac_code || "",
         kw_code: item.kw_code || "",
         mfr_serial: item.serial_number || "",
+        brand: item.brand || "",
         quantity: 1,
         unit_price: item.sale_price,
         ...DEFAULT_WARRANTY,
@@ -97,6 +122,7 @@ export default function NewInvoice() {
         ac_code: "",
         kw_code: "",
         mfr_serial: "",
+        brand: "",
         quantity: 1,
         unit_price: 0,
         ...DEFAULT_WARRANTY,
@@ -138,10 +164,33 @@ export default function NewInvoice() {
   }
 
   const subtotal = lineItems.reduce((s, li) => s + li.quantity * li.unit_price, 0);
+  const [watchTaxRate, watchDeliveryFee] = watch(["tax_rate", "delivery_fee"]);
+  const taxAmount = subtotal * ((parseFloat(watchTaxRate) || 0) / 100);
+  const grandTotal = subtotal + taxAmount + (parseFloat(watchDeliveryFee) || 0);
+
+  const splitSum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  const splitError =
+    splitPayment && lineItems.length > 0 && Math.abs(splitSum - grandTotal) > 0.01;
 
   async function onSubmit(data) {
+    setError("");
     if (lineItems.length === 0) { setError("Add at least one line item"); return; }
     if (!storeId) { setError("No store selected"); return; }
+
+    if (!splitPayment && !singlePaymentMethod) {
+      setSinglePaymentError("Required");
+      setError("Required fields missing: Payment Method");
+      return;
+    }
+    setSinglePaymentError("");
+
+    if (splitPayment) {
+      const sum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+      if (Math.abs(sum - grandTotal) > 0.01) {
+        setError(`Payments must add up to the grand total (${fmt(grandTotal)}). Current sum: ${fmt(sum)}`);
+        return;
+      }
+    }
 
     const hasUnsaved = lineItems.some((li) => li.item_id && li._editingItem);
     if (hasUnsaved) {
@@ -151,12 +200,24 @@ export default function NewInvoice() {
       if (!proceed) return;
     }
 
-    setError("");
     try {
       await createMutation.mutateAsync({
         ...data,
         store_id: storeId,
-        payment_method: data.payment_method || null,
+        salesman: data.salesman || null,
+        delivery_street: data.delivery_street || null,
+        delivery_city: data.delivery_city || null,
+        delivery_zip: data.delivery_zip || null,
+        delivery_state: data.delivery_state || null,
+        invoice_date: data.invoice_date ? new Date(data.invoice_date).toISOString() : null,
+        is_split_payment: splitPayment,
+        payment_method: splitPayment ? null : singlePaymentMethod || null,
+        payment_1_method: splitPayment ? payments[0].method || null : null,
+        payment_1_amount: splitPayment ? parseFloat(payments[0].amount) || null : null,
+        payment_2_method: splitPayment ? payments[1].method || null : null,
+        payment_2_amount: splitPayment ? parseFloat(payments[1].amount) || null : null,
+        payment_3_method: splitPayment ? payments[2].method || null : null,
+        payment_3_amount: splitPayment ? parseFloat(payments[2].amount) || null : null,
         tax_rate: parseFloat(data.tax_rate) || 0,
         delivery_fee: parseFloat(data.delivery_fee) || 0,
         has_non_appliance_services:
@@ -169,6 +230,7 @@ export default function NewInvoice() {
           ac_code: li.ac_code,
           kw_code: li.kw_code,
           mfr_serial: li.mfr_serial,
+          brand: li.brand || null,
           quantity: Number(li.quantity),
           unit_price: parseFloat(li.unit_price),
           warranty_term: li.warranty_term,
@@ -178,8 +240,21 @@ export default function NewInvoice() {
         })),
       });
     } catch (e) {
-      setError(e.response?.data?.detail || "Failed to create invoice");
+      const detail = e.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        const msgs = detail.map((d) => `${d.loc?.at(-1) || "field"}: ${d.msg}`).join("; ");
+        setError(`Failed to create invoice — ${msgs}`);
+      } else {
+        setError(detail || "Failed to create invoice");
+      }
     }
+  }
+
+  function onFormError(formErrors) {
+    const missing = Object.keys(formErrors)
+      .map((k) => FIELD_LABELS[k] || k.replace(/_/g, " "))
+      .join(", ");
+    setError(`Required fields missing: ${missing}`);
   }
 
   const fmt = (n) =>
@@ -187,6 +262,8 @@ export default function NewInvoice() {
 
   const inp = "border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300";
   const roVal = "text-xs text-gray-700 px-1 py-1 leading-tight";
+  const fieldCls = "w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400";
+  const errCls = "border-red-400";
 
   return (
     <div className="max-w-7xl">
@@ -197,7 +274,7 @@ export default function NewInvoice() {
         <h2 className="text-xl font-semibold text-gray-800">New Invoice</h2>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+      <form onSubmit={handleSubmit(onSubmit, onFormError)} className="space-y-5">
         {/* Location */}
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
@@ -222,42 +299,73 @@ export default function NewInvoice() {
               <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
               <input
                 {...register("customer_name", { required: "Required" })}
-                className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                className={`${fieldCls}${errors.customer_name ? ` ${errCls}` : ""}`}
               />
               {errors.customer_name && (
-                <p className="text-red-500 text-xs">{errors.customer_name.message}</p>
+                <p className="text-red-500 text-xs mt-0.5">{errors.customer_name.message}</p>
               )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
-              <input
-                {...register("customer_phone")}
-                className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
+              <input {...register("customer_phone")} className={fieldCls} />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Email *</label>
               <input
-                {...register("customer_email")}
+                {...register("customer_email", { required: "Required" })}
                 type="email"
-                className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                className={`${fieldCls}${errors.customer_email ? ` ${errCls}` : ""}`}
               />
+              {errors.customer_email && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.customer_email.message}</p>
+              )}
             </div>
+
+            {/* Delivery address — structured */}
             <div className="col-span-2">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Billing Address</label>
-              <textarea
-                {...register("customer_address")}
-                rows={2}
-                className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              <label className="block text-xs font-medium text-gray-600 mb-1">Delivery Street *</label>
+              <input
+                {...register("delivery_street", { required: "Required" })}
+                className={`${fieldCls}${errors.delivery_street ? ` ${errCls}` : ""}`}
+                placeholder="123 Main St"
               />
+              {errors.delivery_street && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.delivery_street.message}</p>
+              )}
             </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Delivery Address</label>
-              <textarea
-                {...register("delivery_address")}
-                rows={2}
-                className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">City *</label>
+              <input
+                {...register("delivery_city", { required: "Required" })}
+                className={`${fieldCls}${errors.delivery_city ? ` ${errCls}` : ""}`}
               />
+              {errors.delivery_city && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.delivery_city.message}</p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">State *</label>
+                <input
+                  {...register("delivery_state", { required: "Required" })}
+                  className={`${fieldCls}${errors.delivery_state ? ` ${errCls}` : ""}`}
+                  placeholder="CA"
+                />
+                {errors.delivery_state && (
+                  <p className="text-red-500 text-xs mt-0.5">{errors.delivery_state.message}</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Zip *</label>
+                <input
+                  {...register("delivery_zip", { required: "Required" })}
+                  className={`${fieldCls}${errors.delivery_zip ? ` ${errCls}` : ""}`}
+                  placeholder="90210"
+                />
+                {errors.delivery_zip && (
+                  <p className="text-red-500 text-xs mt-0.5">{errors.delivery_zip.message}</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -314,6 +422,7 @@ export default function NewInvoice() {
                   <tr className="text-gray-500 border-b">
                     <th className="text-left pb-1 pr-2">Type</th>
                     <th className="text-left pb-1 pr-2">Description</th>
+                    <th className="text-left pb-1 pr-2">Brand</th>
                     <th className="text-left pb-1 pr-2">Model #</th>
                     <th className="text-left pb-1 pr-2">A/C Code</th>
                     <th className="text-left pb-1 pr-2">Serial #</th>
@@ -344,24 +453,36 @@ export default function NewInvoice() {
                           </td>
                           <td className="pr-2 pt-2 pb-1">
                             {locked ? (
-                              <span className={`${roVal} w-64 block`}>{li.description || <span className="text-gray-300">—</span>}</span>
+                              <span className={`${roVal} w-52 block`}>{li.description || <span className="text-gray-300">—</span>}</span>
                             ) : (
                               <input
                                 value={li.description}
                                 onChange={(e) => updateLine(idx, "description", e.target.value)}
-                                className={`${inp} w-64`}
+                                className={`${inp} w-52`}
                                 placeholder="Description"
                               />
                             )}
                           </td>
                           <td className="pr-2 pt-2 pb-1">
                             {locked ? (
-                              <span className={`${roVal} w-40 block font-mono`}>{li.model_number || <span className="text-gray-300">—</span>}</span>
+                              <span className={`${roVal} w-24 block`}>{li.brand || <span className="text-gray-300">—</span>}</span>
+                            ) : (
+                              <input
+                                value={li.brand}
+                                onChange={(e) => updateLine(idx, "brand", e.target.value)}
+                                className={`${inp} w-24`}
+                                placeholder="Brand"
+                              />
+                            )}
+                          </td>
+                          <td className="pr-2 pt-2 pb-1">
+                            {locked ? (
+                              <span className={`${roVal} w-36 block font-mono`}>{li.model_number || <span className="text-gray-300">—</span>}</span>
                             ) : (
                               <input
                                 value={li.model_number}
                                 onChange={(e) => updateLine(idx, "model_number", e.target.value)}
-                                className={`${inp} w-40 font-mono`}
+                                className={`${inp} w-36 font-mono`}
                                 placeholder="Model #"
                               />
                             )}
@@ -380,12 +501,12 @@ export default function NewInvoice() {
                           </td>
                           <td className="pr-2 pt-2 pb-1">
                             {locked ? (
-                              <span className={`${roVal} w-40 block font-mono`}>{li.mfr_serial || <span className="text-gray-300">—</span>}</span>
+                              <span className={`${roVal} w-36 block font-mono`}>{li.mfr_serial || <span className="text-gray-300">—</span>}</span>
                             ) : (
                               <input
                                 value={li.mfr_serial}
                                 onChange={(e) => updateLine(idx, "mfr_serial", e.target.value)}
-                                className={`${inp} w-40 font-mono`}
+                                className={`${inp} w-36 font-mono`}
                                 placeholder="Serial #"
                               />
                             )}
@@ -454,7 +575,7 @@ export default function NewInvoice() {
                         </tr>
                         {/* Warranty / codes sub-row */}
                         <tr key={`detail-${idx}`}>
-                          <td colSpan={9} className="pb-2 pr-2">
+                          <td colSpan={10} className="pb-2 pr-2">
                             <div className="flex flex-wrap gap-2 bg-gray-50 rounded px-2 py-1.5 text-xs items-center">
                               <label className="flex items-center gap-1 text-gray-500">
                                 KW Code
@@ -474,16 +595,19 @@ export default function NewInvoice() {
                                   value={li.warranty_term}
                                   onChange={(e) => updateLine(idx, "warranty_term", e.target.value)}
                                   className={`${inp} w-20`}
-                                  placeholder="1 year"
+                                  placeholder="1year"
                                 />
                               </label>
                               <label className="flex items-center gap-1 text-gray-500">
                                 Warranty Price
+                                <span className="text-xs text-gray-400">$</span>
                                 <input
-                                  value={li.warranty_price}
-                                  onChange={(e) => updateLine(idx, "warranty_price", e.target.value)}
-                                  className={`${inp} w-16`}
-                                  placeholder="$0"
+                                  value={(li.warranty_price || "").replace(/^\$/, "")}
+                                  onChange={(e) =>
+                                    updateLine(idx, "warranty_price", `$${e.target.value}`)
+                                  }
+                                  className={`${inp} w-14`}
+                                  placeholder="0"
                                 />
                               </label>
                               <label className="flex items-center gap-1 text-gray-500">
@@ -497,12 +621,15 @@ export default function NewInvoice() {
                               </label>
                               <label className="flex items-center gap-1 text-gray-500">
                                 Provider
-                                <input
+                                <select
                                   value={li.warranty_provider}
                                   onChange={(e) => updateLine(idx, "warranty_provider", e.target.value)}
-                                  className={`${inp} w-24`}
-                                  placeholder="ONPOINT"
-                                />
+                                  className={`${inp} w-28`}
+                                >
+                                  {WARRANTY_PROVIDERS.map((p) => (
+                                    <option key={p} value={p}>{p}</option>
+                                  ))}
+                                </select>
                               </label>
                             </div>
                           </td>
@@ -520,80 +647,184 @@ export default function NewInvoice() {
           </button>
         </div>
 
-        {/* Other services + tax */}
-        <div className="bg-white border border-gray-200 rounded-lg p-5 grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Payment Method *</label>
-            <select
-              {...register("payment_method", { required: "Required" })}
-              className={`w-full border rounded px-2.5 py-1.5 text-sm ${errors.payment_method ? "border-red-400" : "border-gray-300"}`}
-            >
-              <option value="">— Select —</option>
-              {PAYMENT_METHODS.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-            {errors.payment_method && (
-              <p className="text-red-500 text-xs mt-0.5">{errors.payment_method.message}</p>
-            )}
-          </div>
-          <div />
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Other Services (Non-Appliance)?
-            </label>
-            <select
-              {...register("has_non_appliance_services")}
-              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm"
-            >
-              <option value="false">No</option>
-              <option value="true">Yes</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Non-Appliance Description
-            </label>
-            <input
-              {...register("non_appliance_description")}
-              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Tax Rate (%)</label>
-            <input
-              {...register("tax_rate")}
-              type="number"
-              min="0"
-              step="0.01"
-              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Delivery Fee ($)</label>
-            <input
-              {...register("delivery_fee")}
-              type="number"
-              min="0"
-              step="0.01"
-              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm"
-            />
-          </div>
-          <div className="col-span-2">
-            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-            <textarea
-              {...register("notes")}
-              rows={2}
-              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm"
-            />
+        {/* Other Info */}
+        <div className="bg-white border border-gray-200 rounded-lg p-5">
+          <h3 className="font-semibold text-gray-700 mb-3">Other Info</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Salesman</label>
+              <input {...register("salesman")} className={fieldCls} placeholder="Name" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Invoice Date *</label>
+              <input
+                {...register("invoice_date", { required: "Required" })}
+                type="date"
+                className={`${fieldCls}${errors.invoice_date ? ` ${errCls}` : ""}`}
+              />
+              {errors.invoice_date && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.invoice_date.message}</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Other Services (Non-Appliance)?
+              </label>
+              <select
+                {...register("has_non_appliance_services")}
+                className={fieldCls}
+              >
+                <option value="false">No</option>
+                <option value="true">Yes</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Non-Appliance Description
+              </label>
+              <input {...register("non_appliance_description")} className={fieldCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Tax Rate (%) *</label>
+              <input
+                {...register("tax_rate")}
+                type="number"
+                min="0"
+                step="0.01"
+                className={fieldCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Delivery Fee ($) *</label>
+              <input
+                {...register("delivery_fee")}
+                type="number"
+                min="0"
+                step="0.01"
+                className={fieldCls}
+              />
+            </div>
+            <div className="col-span-2">
+              <div className="text-sm text-gray-700">
+                Grand Total:{" "}
+                <span className="font-semibold text-gray-900">{fmt(grandTotal)}</span>
+                {subtotal > 0 && (
+                  <span className="text-xs text-gray-400 ml-2">
+                    (Subtotal {fmt(subtotal)}{taxAmount > 0 ? ` + Tax ${fmt(taxAmount)}` : ""}{parseFloat(watchDeliveryFee) > 0 ? ` + Delivery ${fmt(parseFloat(watchDeliveryFee))}` : ""})
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+              <textarea
+                {...register("notes")}
+                rows={2}
+                className={fieldCls}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Totals preview */}
-        <div className="bg-white border border-gray-200 rounded-lg p-4 text-sm text-right">
-          <div className="text-gray-500">
-            Subtotal: <span className="font-medium text-gray-800">{fmt(subtotal)}</span>
+        {/* Payment Information */}
+        <div className="bg-white border border-gray-200 rounded-lg p-5">
+          <h3 className="font-semibold text-gray-700 mb-3">Payment Information</h3>
+
+          {/* Toggle */}
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-sm text-gray-600">Separate Payment?</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSplitPayment((v) => !v);
+                setSinglePaymentError("");
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                splitPayment ? "bg-blue-600" : "bg-gray-300"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  splitPayment ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+            <span className="text-sm text-gray-500">{splitPayment ? "Yes" : "No"}</span>
           </div>
+
+          {!splitPayment && (
+            <p className="text-xs text-gray-500 mb-3">
+              Payment amount will be Paid-in-Full (Grand Total: {fmt(grandTotal)}).
+            </p>
+          )}
+
+          {!splitPayment ? (
+            <div className="max-w-xs">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Payment Method *</label>
+              <select
+                value={singlePaymentMethod}
+                onChange={(e) => {
+                  setSinglePaymentMethod(e.target.value);
+                  if (e.target.value) setSinglePaymentError("");
+                }}
+                className={`${fieldCls}${singlePaymentError ? ` ${errCls}` : ""}`}
+              >
+                <option value="">— Select —</option>
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              {singlePaymentError && (
+                <p className="text-red-500 text-xs mt-0.5">{singlePaymentError}</p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-4">
+                {payments.map((p, i) => (
+                  <div key={i} className="space-y-2">
+                    <p className="text-xs font-medium text-gray-600">Payment {i + 1}</p>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Method *</label>
+                      <select
+                        value={p.method}
+                        onChange={(e) =>
+                          setPayments((prev) =>
+                            prev.map((x, j) => (j === i ? { ...x, method: e.target.value } : x))
+                          )
+                        }
+                        className={fieldCls}
+                      >
+                        <option value="">— Select —</option>
+                        {PAYMENT_METHODS.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Amount ($) *</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={p.amount}
+                        onChange={(e) =>
+                          setPayments((prev) =>
+                            prev.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x))
+                          )
+                        }
+                        className={fieldCls}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {splitError && (
+                <p className="text-red-500 text-xs mt-2">
+                  Payments must add up to the grand total ({fmt(grandTotal)}). Current sum: {fmt(splitSum)}.
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         {error && <p className="text-red-500 text-sm">{error}</p>}

@@ -4,19 +4,17 @@ import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { useStore } from "../context/StoreContext";
 
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-
 export default function InvoiceList() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { stores } = useStore();
 
   const now = new Date();
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const toDateStr = (d) => d.toISOString().slice(0, 10);
+
+  const [startDate, setStartDate] = useState(toDateStr(firstOfMonth));
+  const [endDate, setEndDate] = useState(toDateStr(now));
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [expandedIds, setExpandedIds] = useState(new Set());
 
@@ -41,26 +39,14 @@ export default function InvoiceList() {
     },
   });
 
-  const minYear = useMemo(() => {
-    if (!invoices.length) return now.getFullYear();
-    return Math.min(...invoices.map((inv) => new Date(inv.created_at).getFullYear()));
-  }, [invoices]);
-
-  const years = useMemo(() => {
-    const max = now.getFullYear();
-    const years = [];
-    for (let y = minYear; y <= max; y++) years.push(y);
-    return years;
-  }, [minYear]);
-
   const filtered = useMemo(() =>
     invoices
       .filter((inv) => !selectedStoreId || inv.store_id === Number(selectedStoreId))
       .filter((inv) => {
         const d = new Date(inv.created_at);
-        return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
+        return d >= new Date(startDate) && d <= new Date(endDate + "T23:59:59");
       }),
-    [invoices, selectedStoreId, selectedMonth, selectedYear]
+    [invoices, selectedStoreId, startDate, endDate]
   );
 
   const stats = useMemo(() => {
@@ -77,29 +63,79 @@ export default function InvoiceList() {
   const fmtDate = (s) =>
     new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
+  function exportCSV() {
+    const headers = [
+      "address 1", "street address", "city", "state", "zip", "email",
+      "Retail Price of Coverage", "warranty", "warranty company", "contract SKU",
+      "Provider SKU price", "brand", "serial number", "KW Code", "item description",
+      "Model Number", "Invoice Date", "Delivery Date",
+    ];
+    const rows = [headers];
+    for (const inv of filtered) {
+      for (const li of inv.line_items ?? []) {
+        if (li.warranty_provider !== "ONPOINT") continue;
+        const addr1 = [
+          inv.delivery_street,
+          inv.delivery_city && inv.delivery_state
+            ? `${inv.delivery_city}, ${inv.delivery_state} ${inv.delivery_zip || ""}`.trim()
+            : inv.delivery_city || "",
+        ].filter(Boolean).join(", ");
+        const invDate = inv.invoice_date
+          ? new Date(inv.invoice_date).toLocaleDateString("en-US")
+          : fmtDate(inv.created_at);
+        rows.push([
+          addr1,
+          inv.delivery_street || "",
+          inv.delivery_city || "",
+          inv.delivery_state || "",
+          inv.delivery_zip || "",
+          inv.customer_email || "",
+          li.warranty_price || "",
+          li.warranty_term || "",
+          li.warranty_provider || "",
+          li.ac_code || "",
+          li.warranty_price || "",
+          li.brand || "",
+          li.mfr_serial || "",
+          li.kw_code || "",
+          li.appliance_type || "",
+          li.model_number || "",
+          invDate,
+          "",
+        ]);
+      }
+    }
+    const csv = rows
+      .map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement("a"), {
+      href: url,
+      download: `onpoint-${startDate}-${endDate}.csv`,
+    });
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div>
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <h2 className="text-xl font-semibold text-gray-800 mr-2">Sales</h2>
-        <select
-          value={selectedMonth}
-          onChange={(e) => setSelectedMonth(Number(e.target.value))}
+        <input
+          type="date"
+          value={startDate}
+          onChange={(e) => setStartDate(e.target.value)}
           className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-          {MONTHS.map((m, i) => (
-            <option key={m} value={i}>{m}</option>
-          ))}
-        </select>
-        <select
-          value={selectedYear}
-          onChange={(e) => setSelectedYear(Number(e.target.value))}
+        />
+        <span className="text-gray-400 text-sm">to</span>
+        <input
+          type="date"
+          value={endDate}
+          onChange={(e) => setEndDate(e.target.value)}
           className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-          {years.map((y) => (
-            <option key={y} value={y}>{y}</option>
-          ))}
-        </select>
+        />
         <select
           value={selectedStoreId}
           onChange={(e) => setSelectedStoreId(e.target.value)}
@@ -111,6 +147,12 @@ export default function InvoiceList() {
           ))}
         </select>
         <div className="flex-1" />
+        <button
+          onClick={exportCSV}
+          className="border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-1.5 rounded text-sm font-medium"
+        >
+          Export CSV
+        </button>
         <button
           onClick={() => navigate("/invoices/new")}
           className="bg-blue-700 hover:bg-blue-800 text-white px-4 py-1.5 rounded text-sm font-medium"
@@ -152,7 +194,7 @@ export default function InvoiceList() {
               {!isLoading && filtered.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
-                    No invoices for {MONTHS[selectedMonth]} {selectedYear}
+                    No invoices for {startDate} – {endDate}
                   </td>
                 </tr>
               )}
