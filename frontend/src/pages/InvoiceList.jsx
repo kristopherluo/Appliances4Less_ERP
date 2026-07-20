@@ -51,7 +51,7 @@ export default function InvoiceList() {
   const filtered = useMemo(() =>
     invoices
       .filter((inv) => !selectedStoreId || inv.store_id === Number(selectedStoreId))
-      .filter((inv) => !selectedSalesman || inv.salesman === selectedSalesman)
+      .filter((inv) => !selectedSalesman || inv.salesman?.toLowerCase() === selectedSalesman.toLowerCase())
       .filter((inv) => {
         const d = new Date(inv.created_at);
         return d >= new Date(startDate) && d <= new Date(endDate + "T23:59:59");
@@ -61,10 +61,13 @@ export default function InvoiceList() {
 
   // Unique salesmen from all (unfiltered) invoices for the dropdown
   const salesmenOptions = useMemo(() => {
-    const names = invoices
-      .map((inv) => inv.salesman)
-      .filter(Boolean);
-    return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+    const seen = new Map();
+    for (const inv of invoices) {
+      if (!inv.salesman) continue;
+      const key = inv.salesman.toLowerCase();
+      if (!seen.has(key)) seen.set(key, inv.salesman);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
   }, [invoices]);
 
   const stats = useMemo(() => {
