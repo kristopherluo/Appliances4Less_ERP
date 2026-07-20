@@ -19,7 +19,7 @@ export default function App() {
     <BrowserRouter>
       <StoreProvider>
         <Routes>
-          <Route path="/" element={<Layout><Inventory /></Layout>} />
+          <Route path="/" element={<Layout wide><Inventory /></Layout>} />
           <Route path="/invoices" element={<Layout wide><InvoiceList /></Layout>} />
           <Route path="/invoices/new" element={<Layout><NewInvoice /></Layout>} />
           <Route path="*" element={<Navigate to="/" replace />} />

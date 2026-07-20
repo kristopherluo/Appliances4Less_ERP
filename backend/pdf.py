@@ -3,9 +3,17 @@ import os
 import models
 
 _ASSETS = os.path.join(os.path.dirname(__file__), "assets")
-_LOGO = os.path.join(_ASSETS, "logo.png")
-_WARRANTY_P1 = os.path.join(_ASSETS, "warranty_p1.png")
 _WARRANTY_P2 = os.path.join(_ASSETS, "warranty_p2.png")
+
+_WARRANTY_TEXT = (
+    "Please contact your store. Above delivery and service fees are not refundable. "
+    "For reasons other than functional issues, customers are responsible for sending "
+    "appliances back to the store by themselves. After the goods are received, the "
+    "payment will be refunded according to the customer's payment method (if customer "
+    "need merchant pick up the returned goods at home, additional shipping fees will be "
+    "charged). Customers are responsible for any service fee / processing fee that may "
+    "occur during the refund."
+)
 
 
 def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
@@ -17,25 +25,13 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     # ── HEADER ────────────────────────────────────────────────────────────────
     left_w = 110
 
-    # Logo image (replaces store name text)
-    if os.path.exists(_LOGO):
-        pdf.image(_LOGO, x=14, y=pdf.get_y(), h=14)
-        pdf.set_xy(14 + left_w, pdf.get_y())
-    else:
-        pdf.set_font("Helvetica", "B", 18)
-        pdf.cell(left_w, 8, "APPLIANCES 4 LESS", ln=False)
-        pdf.set_xy(14 + left_w, pdf.get_y())
-
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(left_w, 8, store.name or "APPLIANCES 4 LESS", ln=False)
     pdf.set_font("Helvetica", "B", 20)
     pdf.cell(0, 8, "INVOICE", ln=True, align="R")
 
-    # Move Y past the logo (logo is 14mm tall)
-    if os.path.exists(_LOGO):
-        pdf.set_y(max(pdf.get_y(), 12 + 14 + 2))
-
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(left_w, 5, store.address or "", ln=False)
-    pdf.set_font("Helvetica", "", 9)
     pdf.cell(0, 5, f"#{invoice.id:05d}  |  {invoice.created_at.strftime('%m/%d/%Y, %-I:%M:%S %p')}", ln=True, align="R")
 
     if store.phone:
@@ -55,13 +51,12 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     pdf.cell(left_w, 6, "BILL TO:", ln=True)
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(left_w, 5, invoice.customer_name, ln=True)
-    if invoice.customer_address:
-        for ln_text in invoice.customer_address.splitlines():
-            pdf.cell(left_w, 4, ln_text, ln=True)
     if invoice.customer_phone:
         pdf.cell(left_w, 4, f"Phone: {invoice.customer_phone}", ln=True)
     if invoice.customer_email:
         pdf.cell(left_w, 4, f"Email: {invoice.customer_email}", ln=True)
+    if invoice.delivery_address:
+        pdf.cell(left_w, 4, f"Delivery Address: {invoice.delivery_address}", ln=True)
     y_after_left = pdf.get_y()
 
     # Right: Bill For
@@ -182,7 +177,7 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
 
     # ── NOTES ─────────────────────────────────────────────────────────────────
     has_notes = (
-        invoice.payment_method or invoice.notes or invoice.delivery_address or invoice.salesman
+        invoice.payment_method or invoice.notes or invoice.salesman
         or invoice.is_split_payment
     )
     if has_notes:
@@ -205,21 +200,37 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
         if invoice.notes:
             for note_line in invoice.notes.splitlines():
                 pdf.cell(0, 4, f"- {note_line}", ln=True)
-        if invoice.delivery_address:
-            pdf.cell(0, 4, f"- Delivery Address: {invoice.delivery_address}", ln=True)
         pdf.ln(3)
 
     pdf.line(14, pdf.get_y(), 202, pdf.get_y())
     pdf.ln(3)
 
-    # ── PAGE 1 FOOTER: delivery/pickup sign-off + scratch & dent terms ────────
-    page_w = 188  # usable width (215.9 - 14*2)
-    if os.path.exists(_WARRANTY_P1):
-        pdf.image(_WARRANTY_P1, x=14, y=pdf.get_y(), w=page_w)
+    # ── GE AS IS WARRANTY SECTION ─────────────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(0, 5, "- GE AS IS PRODUCTS -", ln=True)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(0, 5, "GE AS IS PRODUCTS", ln=True)
+    pdf.ln(2)
 
-    # ── PAGE 2: product types and warranty ────────────────────────────────────
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(0, 4, "Warranty within 7 Days After Purchase:", ln=True)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.multi_cell(0, 4, _WARRANTY_TEXT)
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(0, 4, "After 7 days:", ln=True)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(0, 4, "All warranty service will be provided by GE Consumer Service Centers or by GE's authorized CustomerCare.", ln=True)
+    pdf.ln(6)
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 5, "Customer Signature: ___________________________", ln=True, align="R")
+
+    # ── PAGE 2: product types and warranty image ──────────────────────────────
     pdf.add_page()
     if os.path.exists(_WARRANTY_P2):
+        page_w = 188
         pdf.image(_WARRANTY_P2, x=14, y=pdf.get_y(), w=page_w)
 
     return pdf.output()
