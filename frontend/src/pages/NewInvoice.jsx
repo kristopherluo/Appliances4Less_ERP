@@ -9,16 +9,19 @@ const DEFAULT_WARRANTY = {
   warranty_term: "1year",
   warranty_price: "$0",
   warranty_id: "",
-  warranty_provider: "NA",
+  warranty_provider: "ONPOINT",
 };
 
 const PAYMENT_METHODS = ["Cash", "Debit", "Credit", "Check", "Financing", "Other"];
-const WARRANTY_PROVIDERS = ["NA", "ONPOINT", "CPS", "MANUFACTURE", "STORE", "FRONTIER"];
+const WARRANTY_PROVIDERS = ["ONPOINT", "CPS", "MANUFACTURE", "MANUFACTURE+ONPOINT", "STORE", "FRONTIER"];
 
 const FIELD_LABELS = {
   customer_name: "Name",
+  customer_phone: "Phone",
   customer_email: "Email",
+  salesman: "Salesman",
   invoice_date: "Invoice Date",
+  tax_rate: "Tax Rate",
   delivery_street: "Delivery Street",
   delivery_city: "City",
   delivery_state: "State",
@@ -36,7 +39,6 @@ export default function NewInvoice() {
 
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm({
     defaultValues: {
-      tax_rate: 0,
       delivery_fee: 0,
       invoice_date: new Date().toISOString().slice(0, 10),
     },
@@ -169,8 +171,7 @@ export default function NewInvoice() {
   const grandTotal = subtotal + taxAmount + (parseFloat(watchDeliveryFee) || 0);
 
   const splitSum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-  const splitError =
-    splitPayment && lineItems.length > 0 && Math.abs(splitSum - grandTotal) > 0.01;
+  const splitBalance = splitPayment ? grandTotal - splitSum : 0;
 
   async function onSubmit(data) {
     setError("");
@@ -184,13 +185,7 @@ export default function NewInvoice() {
     }
     setSinglePaymentError("");
 
-    if (splitPayment) {
-      const sum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-      if (Math.abs(sum - grandTotal) > 0.01) {
-        setError(`Payments must add up to the grand total (${fmt(grandTotal)}). Current sum: ${fmt(sum)}`);
-        return;
-      }
-    }
+    // Partial payments allowed — no sum validation
 
     const hasUnsaved = lineItems.some((li) => li.item_id && li._editingItem);
     if (hasUnsaved) {
@@ -306,8 +301,14 @@ export default function NewInvoice() {
               )}
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
-              <input {...register("customer_phone")} className={fieldCls} />
+              <label className="block text-xs font-medium text-gray-600 mb-1">Phone *</label>
+              <input
+                {...register("customer_phone", { required: "Required" })}
+                className={`${fieldCls}${errors.customer_phone ? ` ${errCls}` : ""}`}
+              />
+              {errors.customer_phone && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.customer_phone.message}</p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Email *</label>
@@ -652,8 +653,15 @@ export default function NewInvoice() {
           <h3 className="font-semibold text-gray-700 mb-3">Other Info</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Salesman</label>
-              <input {...register("salesman")} className={fieldCls} placeholder="Name" />
+              <label className="block text-xs font-medium text-gray-600 mb-1">Salesman *</label>
+              <input
+                {...register("salesman", { required: "Required" })}
+                className={`${fieldCls}${errors.salesman ? ` ${errCls}` : ""}`}
+                placeholder="Name"
+              />
+              {errors.salesman && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.salesman.message}</p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Invoice Date *</label>
@@ -687,12 +695,16 @@ export default function NewInvoice() {
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Tax Rate (%) *</label>
               <input
-                {...register("tax_rate")}
+                {...register("tax_rate", { required: "Required" })}
                 type="number"
                 min="0"
                 step="0.01"
-                className={fieldCls}
+                placeholder="e.g. 10.25"
+                className={`${fieldCls}${errors.tax_rate ? ` ${errCls}` : ""}`}
               />
+              {errors.tax_rate && (
+                <p className="text-red-500 text-xs mt-0.5">{errors.tax_rate.message}</p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Delivery Fee ($) *</label>
@@ -818,9 +830,9 @@ export default function NewInvoice() {
                   </div>
                 ))}
               </div>
-              {splitError && (
-                <p className="text-red-500 text-xs mt-2">
-                  Payments must add up to the grand total ({fmt(grandTotal)}). Current sum: {fmt(splitSum)}.
+              {splitPayment && lineItems.length > 0 && (
+                <p className={`text-xs mt-2 ${splitBalance > 0.01 ? "text-amber-600" : "text-green-600"}`}>
+                  Paid: {fmt(splitSum)} / {fmt(grandTotal)} — Balance: {fmt(Math.max(splitBalance, 0))}
                 </p>
               )}
             </>

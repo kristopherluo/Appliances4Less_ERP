@@ -153,5 +153,8 @@ class InvoiceItem(Base):
     warranty_id = Column(String(100), default="")
     warranty_provider = Column(String(100), default="ONPOINT")
 
+    # Cost snapshot for profit tracking
+    cost_price = Column(Float, nullable=True)
+
     invoice = relationship("Invoice", back_populates="line_items")
     item = relationship("Item", back_populates="invoice_items")

@@ -136,7 +136,7 @@ class InvoiceItemCreate(BaseModel):
     warranty_term: Optional[str] = "1year"
     warranty_price: Optional[str] = "$0"
     warranty_id: Optional[str] = ""
-    warranty_provider: Optional[str] = "NA"
+    warranty_provider: Optional[str] = "ONPOINT"
 
 
 class InvoiceItemOut(BaseModel):
@@ -156,6 +156,7 @@ class InvoiceItemOut(BaseModel):
     warranty_price: Optional[str]
     warranty_id: Optional[str]
     warranty_provider: Optional[str]
+    cost_price: Optional[float] = None
     model_config = {"from_attributes": True}
 
 
@@ -184,6 +185,47 @@ class InvoiceCreate(BaseModel):
     has_non_appliance_services: bool = False
     non_appliance_description: Optional[str] = None
     line_items: list[InvoiceItemCreate]
+
+
+class InvoiceLineItemUpdate(BaseModel):
+    appliance_type: Optional[str] = None
+    description: Optional[str] = None
+    model_number: Optional[str] = None
+    ac_code: Optional[str] = None
+    kw_code: Optional[str] = None
+    mfr_serial: Optional[str] = None
+    brand: Optional[str] = None
+    quantity: Optional[int] = None
+    unit_price: Optional[float] = None
+    warranty_term: Optional[str] = None
+    warranty_price: Optional[str] = None
+    warranty_id: Optional[str] = None
+    warranty_provider: Optional[str] = None
+
+
+class InvoiceUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_email: Optional[str] = None
+    salesman: Optional[str] = None
+    delivery_street: Optional[str] = None
+    delivery_city: Optional[str] = None
+    delivery_zip: Optional[str] = None
+    delivery_state: Optional[str] = None
+    invoice_date: Optional[datetime] = None
+    is_split_payment: Optional[bool] = None
+    payment_method: Optional[str] = None
+    payment_1_method: Optional[str] = None
+    payment_1_amount: Optional[float] = None
+    payment_2_method: Optional[str] = None
+    payment_2_amount: Optional[float] = None
+    payment_3_method: Optional[str] = None
+    payment_3_amount: Optional[float] = None
+    tax_rate: Optional[float] = None
+    delivery_fee: Optional[float] = None
+    notes: Optional[str] = None
+    has_non_appliance_services: Optional[bool] = None
+    non_appliance_description: Optional[str] = None
 
 
 class InvoiceOut(BaseModel):

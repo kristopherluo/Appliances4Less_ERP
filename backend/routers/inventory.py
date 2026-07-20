@@ -45,6 +45,57 @@ def delete_item(item_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+@router.get("/export")
+def export_items_xlsx(store_id: int | None = None, db: Session = Depends(get_db)):
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl not installed")
+    from fastapi.responses import StreamingResponse
+    import io as _io
+
+    query = db.query(models.Item)
+    if store_id:
+        query = query.filter(models.Item.store_id == store_id)
+    items = query.order_by(models.Item.name).all()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Inventory"
+
+    headers = ["Load Number", "Models", "Description", "Serials", "MSRP", "Store Price", "Details"]
+    header_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for row_idx, item in enumerate(items, start=2):
+        ws.cell(row=row_idx, column=1, value=item.load_number or "")
+        ws.cell(row=row_idx, column=2, value=item.model_number or "")
+        ws.cell(row=row_idx, column=3, value=item.appliance_type or "")
+        ws.cell(row=row_idx, column=4, value=item.serial_number or "")
+        ws.cell(row=row_idx, column=5, value=item.sale_price)
+        ws.cell(row=row_idx, column=6, value=item.cost_price)
+        ws.cell(row=row_idx, column=7, value=item.name or "")
+
+    for col in ws.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=0)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=inventory.xlsx"},
+    )
+
+
 @router.post("/import", status_code=status.HTTP_201_CREATED)
 async def import_items_xlsx(
     store_id: int = Form(...),

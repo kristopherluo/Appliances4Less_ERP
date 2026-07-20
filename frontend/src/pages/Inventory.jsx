@@ -185,6 +185,19 @@ export default function Inventory() {
         <div className="flex-1" />
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImport} />
         <button
+          onClick={async () => {
+            const params = filterStoreId ? `?store_id=${filterStoreId}` : "";
+            const res = await api.get(`/inventory/export${params}`, { responseType: "blob" });
+            const url = URL.createObjectURL(res.data);
+            const a = Object.assign(document.createElement("a"), { href: url, download: "inventory.xlsx" });
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          className="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-4 py-1.5 rounded text-sm"
+        >
+          Export Excel
+        </button>
+        <button
           onClick={openImportModal}
           className="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 px-4 py-1.5 rounded text-sm"
         >
@@ -210,7 +223,7 @@ export default function Inventory() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
               <tr>
-                {["A/C Code", "Brand", "Type", "Details", "Model #", "Serial #", "Grade", "Location", "Cost", "Sale Price", "In Stock", ""].map((h) => (
+                {["A/C Code", "Brand", "Type", "Details", "Model #", "Serial #", "Grade", "Location", "Cost", "MSRP", "In Stock", ""].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left whitespace-nowrap font-semibold">{h}</th>
                 ))}
               </tr>
@@ -243,8 +256,7 @@ export default function Inventory() {
                     </span>
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
-                    <button onClick={() => { setEditItem(item); setShowModal(true); }} className="text-blue-600 hover:underline text-xs mr-3">Edit</button>
-                    <button onClick={() => confirmDelete(item)} className="text-red-500 hover:underline text-xs">Delete</button>
+                    <button onClick={() => { setEditItem(item); setShowModal(true); }} className="text-blue-600 hover:underline text-xs">Edit</button>
                   </td>
                 </tr>
               ))}
@@ -317,6 +329,10 @@ export default function Inventory() {
             setShowModal(false);
             qc.invalidateQueries({ queryKey: ["items"] });
           }}
+          onDelete={editItem ? (item) => {
+            setShowModal(false);
+            deleteMutation.mutate(item.id);
+          } : undefined}
         />
       )}
     </div>

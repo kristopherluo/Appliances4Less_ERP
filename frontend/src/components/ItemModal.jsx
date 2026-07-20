@@ -7,7 +7,7 @@ const APPLIANCE_TYPES = [
   "Microwave", "Freezer", "AC Unit", "Other",
 ];
 
-export default function ItemModal({ item, stores, defaultStoreId, onClose, onSaved }) {
+export default function ItemModal({ item, stores, defaultStoreId, onClose, onSaved, onDelete }) {
   const isEdit = !!item;
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm();
 
@@ -121,13 +121,30 @@ export default function ItemModal({ item, stores, defaultStoreId, onClose, onSav
             <label htmlFor="is_in_stock" className="text-sm text-gray-700">In Stock</label>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50">
-              Cancel
-            </button>
-            <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-sm bg-blue-700 text-white rounded hover:bg-blue-800 disabled:opacity-50">
-              {isSubmitting ? "Saving…" : isEdit ? "Save Changes" : "Add Item"}
-            </button>
+          <div className="flex justify-between items-center pt-2">
+            <div>
+              {isEdit && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`Delete "${item.name}"? This cannot be undone.`)) {
+                      onDelete(item);
+                    }
+                  }}
+                  className="px-4 py-2 text-sm bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={isSubmitting} className="px-4 py-2 text-sm bg-blue-700 text-white rounded hover:bg-blue-800 disabled:opacity-50">
+                {isSubmitting ? "Saving…" : isEdit ? "Save Changes" : "Add Item"}
+              </button>
+            </div>
           </div>
         </form>
       </div>
