@@ -5,17 +5,18 @@ from pricing import balance_due, parse_warranty_price
 from timeutil import to_central
 
 _ASSETS = os.path.join(os.path.dirname(__file__), "assets")
-_WARRANTY_P2 = os.path.join(_ASSETS, "warranty_p2.png")
-
-_WARRANTY_TEXT = (
-    "Please contact your store. Above delivery and service fees are not refundable. "
-    "For reasons other than functional issues, customers are responsible for sending "
-    "appliances back to the store by themselves. After the goods are received, the "
-    "payment will be refunded according to the customer's payment method (if customer "
-    "need merchant pick up the returned goods at home, additional shipping fees will be "
-    "charged). Customers are responsible for any service fee / processing fee that may "
-    "occur during the refund."
-)
+_TERMS = [
+    "**7 Days Return Policy:** The store is responsible for the return, repair, or replacement of any "
+    "appliance with functional issues. Delivery & Service Fees Strictly non-refundable. For non-functional "
+    "reasons, customers are responsible for transporting the appliance back to the store.\n"
+    "If home pickup by the merchant is requested, additional shipping fees will apply.",
+    "**After 7 days:** All warranties will be provided by GE, Whirlpool, or Onpoint with a one-year "
+    "warranty. GE: 1-800-432-2737; Onpoint: 1-877-594-3297; Whirlpool: 1-866-698-2538",
+    "I acknowledge and accept that I have carefully reviewed each term of this Disclosure and Disclaimer. "
+    "I further acknowledge and agree that the serial number on some of the appliances is not from the "
+    "factory, and cannot register for the manufacturer's warranty. But third-party warranty \"Onpoint\" "
+    "will cover this.",
+]
 
 
 def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
@@ -214,32 +215,21 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     pdf.line(14, pdf.get_y(), 202, pdf.get_y())
     pdf.ln(3)
 
-    # ── GE AS IS WARRANTY SECTION ─────────────────────────────────────────────
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.cell(0, 5, "- GE AS IS PRODUCTS -", ln=True)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(0, 5, "GE AS IS PRODUCTS", ln=True)
-    pdf.ln(2)
-
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.cell(0, 4, "Warranty within 7 Days After Purchase:", ln=True)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.multi_cell(0, 4, _WARRANTY_TEXT)
-    pdf.ln(2)
-
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.cell(0, 4, "After 7 days:", ln=True)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.cell(0, 4, "All warranty service will be provided by GE Consumer Service Centers or by GE's authorized CustomerCare.", ln=True)
-    pdf.ln(6)
+    # ── TERMS ─────────────────────────────────────────────────────────────────
+    pdf.set_font("Helvetica", "", 7.5)
+    line_h = 3.6
+    terms_h = sum(
+        len(pdf.multi_cell(0, line_h, para, markdown=True, dry_run=True, output="LINES")) * line_h + 1.5
+        for para in _TERMS
+    )
+    if pdf.get_y() + terms_h + 14 > pdf.page_break_trigger:
+        pdf.add_page()
+    for para in _TERMS:
+        pdf.multi_cell(0, line_h, para, markdown=True)
+        pdf.ln(1.5)
+    pdf.ln(4)
 
     pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 5, "Customer Signature: ___________________________", ln=True, align="R")
-
-    # ── PAGE 2: product types and warranty image ──────────────────────────────
-    pdf.add_page()
-    if os.path.exists(_WARRANTY_P2):
-        page_w = 188
-        pdf.image(_WARRANTY_P2, x=14, y=pdf.get_y(), w=page_w)
+    pdf.cell(0, 5, "Customer Signature: ____________________________  Date: _______________", ln=True, align="R")
 
     return pdf.output()
