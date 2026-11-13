@@ -1,6 +1,8 @@
 from fpdf import FPDF
 import os
 import models
+from pricing import balance_due, parse_warranty_price
+from timeutil import to_central
 
 _ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 _WARRANTY_P2 = os.path.join(_ASSETS, "warranty_p2.png")
@@ -32,7 +34,7 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
 
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(left_w, 5, store.address or "", ln=False)
-    pdf.cell(0, 5, f"#{invoice.id:05d}  |  {invoice.created_at.strftime('%m/%d/%Y, %-I:%M:%S %p')}", ln=True, align="R")
+    pdf.cell(0, 5, f"#{invoice.id:05d}  |  {to_central(invoice.created_at).strftime('%m/%d/%Y, %-I:%M:%S %p')}", ln=True, align="R")
 
     if store.phone:
         pdf.set_font("Helvetica", "", 9)
@@ -155,9 +157,12 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     label_w = 152
     val_w = 32
 
+    warranty_total = sum(parse_warranty_price(li.warranty_price) for li in invoice.line_items)
+    items_total = invoice.subtotal - warranty_total
+
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(label_w, 6, "Subtotal :", align="R")
-    pdf.cell(val_w, 6, f"$ {invoice.subtotal:,.2f}", align="R", ln=True)
+    pdf.cell(val_w, 6, f"$ {items_total:,.2f}", align="R", ln=True)
 
     if invoice.delivery_fee:
         pdf.cell(label_w, 6, "Delivery Fee :", align="R")
@@ -166,6 +171,10 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     if invoice.tax_amount:
         pdf.cell(label_w, 6, f"Tax :", align="R")
         pdf.cell(val_w, 6, f"$ {invoice.tax_amount:,.2f}", align="R", ln=True)
+
+    if warranty_total:
+        pdf.cell(label_w, 6, "Warranties :", align="R")
+        pdf.cell(val_w, 6, f"$ {warranty_total:,.2f}", align="R", ln=True)
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(label_w, 7, "Total :", align="R")
@@ -176,31 +185,31 @@ def generate_invoice_pdf(invoice: models.Invoice, store: models.Store) -> bytes:
     pdf.ln(3)
 
     # ── NOTES ─────────────────────────────────────────────────────────────────
-    has_notes = (
-        invoice.payment_method or invoice.notes or invoice.salesman
-        or invoice.is_split_payment
-    )
-    if has_notes:
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 5, "Notes:", ln=True)
-        pdf.set_font("Helvetica", "", 8)
-        if invoice.salesman:
-            pdf.cell(0, 4, f"- Sold by: {invoice.salesman}", ln=True)
-        if invoice.is_split_payment:
-            for i, (method, amount) in enumerate([
-                (invoice.payment_1_method, invoice.payment_1_amount),
-                (invoice.payment_2_method, invoice.payment_2_amount),
-                (invoice.payment_3_method, invoice.payment_3_amount),
-            ], start=1):
-                if method or amount:
-                    amt_str = f"${amount:,.2f}" if amount is not None else ""
-                    pdf.cell(0, 4, f"- Payment {i}: {method or ''} {amt_str}".strip(), ln=True)
-        elif invoice.payment_method:
-            pdf.cell(0, 4, f"- Payment Method: {invoice.payment_method}", ln=True)
-        if invoice.notes:
-            for note_line in invoice.notes.splitlines():
-                pdf.cell(0, 4, f"- {note_line}", ln=True)
-        pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(0, 5, "Notes:", ln=True)
+    pdf.set_font("Helvetica", "", 8)
+    balance = balance_due(invoice)
+    if balance > 0.01:
+        pdf.cell(0, 4, f"- Balance due: ${balance:,.2f}", ln=True)
+    else:
+        pdf.cell(0, 4, "- Paid in full", ln=True)
+    if invoice.salesman:
+        pdf.cell(0, 4, f"- Sold by: {invoice.salesman}", ln=True)
+    if invoice.is_split_payment:
+        for i, (method, amount) in enumerate([
+            (invoice.payment_1_method, invoice.payment_1_amount),
+            (invoice.payment_2_method, invoice.payment_2_amount),
+            (invoice.payment_3_method, invoice.payment_3_amount),
+        ], start=1):
+            if method or amount:
+                amt_str = f"${amount:,.2f}" if amount is not None else ""
+                pdf.cell(0, 4, f"- Payment {i}: {method or ''} {amt_str}".strip(), ln=True)
+    elif invoice.payment_method:
+        pdf.cell(0, 4, f"- Payment Method: {invoice.payment_method}", ln=True)
+    if invoice.notes:
+        for note_line in invoice.notes.splitlines():
+            pdf.cell(0, 4, f"- {note_line}", ln=True)
+    pdf.ln(3)
 
     pdf.line(14, pdf.get_y(), 202, pdf.get_y())
     pdf.ln(3)

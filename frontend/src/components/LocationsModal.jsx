@@ -48,6 +48,7 @@ export default function LocationsModal({ onClose }) {
                   <p className="font-medium text-sm text-gray-800">{s.name}</p>
                   {s.address && <p className="text-xs text-gray-500">{s.address}</p>}
                   {s.phone && <p className="text-xs text-gray-400">{s.phone}</p>}
+                  {s.tax_rate != null && <p className="text-xs text-gray-400">Tax rate: {s.tax_rate}%</p>}
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   {confirmDeleteId === s.id ? (

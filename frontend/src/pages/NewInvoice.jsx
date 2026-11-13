@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import api from "../lib/api";
 import { useStore } from "../context/StoreContext";
+import { PAYMENT_METHODS } from "../lib/constants";
+import { todayCentral, dayToServer } from "../lib/dates";
 
 const DEFAULT_WARRANTY = {
   warranty_term: "1year",
@@ -12,7 +14,6 @@ const DEFAULT_WARRANTY = {
   warranty_provider: "ONPOINT",
 };
 
-const PAYMENT_METHODS = ["Cash", "Debit", "Credit", "Check", "Financing", "Other"];
 const WARRANTY_PROVIDERS = ["ONPOINT", "CPS", "MANUFACTURE", "MANUFACTURE+ONPOINT", "STORE", "FRONTIER"];
 
 const FIELD_LABELS = {
@@ -37,10 +38,10 @@ export default function NewInvoice() {
     if (stores.length > 0 && !storeId) setStoreId(stores[0].id);
   }, [stores]);
 
-  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm({
+  const { register, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = useForm({
     defaultValues: {
       delivery_fee: 0,
-      invoice_date: new Date().toISOString().slice(0, 10),
+      invoice_date: todayCentral(),
     },
   });
 
@@ -56,6 +57,11 @@ export default function NewInvoice() {
     { method: "", amount: "0.00" },
     { method: "", amount: "0.00" },
   ]);
+
+  useEffect(() => {
+    const rate = stores.find((s) => s.id === storeId)?.tax_rate;
+    setValue("tax_rate", rate ?? "");
+  }, [storeId, stores]);
 
   const { data: inventory = [] } = useQuery({
     queryKey: ["items", storeId],
@@ -98,7 +104,6 @@ export default function NewInvoice() {
         item_id: item.id,
         _editingItem: false,
         appliance_type: item.appliance_type || "",
-        description: item.name,
         model_number: item.model_number || "",
         ac_code: item.ac_code || "",
         kw_code: item.kw_code || "",
@@ -119,7 +124,6 @@ export default function NewInvoice() {
         item_id: null,
         _editingItem: true,
         appliance_type: "",
-        description: "",
         model_number: "",
         ac_code: "",
         kw_code: "",
@@ -153,7 +157,6 @@ export default function NewInvoice() {
     try {
       await api.patch(`/inventory/${li.item_id}`, {
         appliance_type: li.appliance_type || null,
-        name: li.description || null,
         model_number: li.model_number || null,
         serial_number: li.mfr_serial || null,
         ac_code: li.ac_code || null,
@@ -165,10 +168,12 @@ export default function NewInvoice() {
     updateLine(idx, "_editingItem", false);
   }
 
+  const parseWarranty = (wp) => parseFloat(String(wp || "").replace("$", "")) || 0;
   const subtotal = lineItems.reduce((s, li) => s + li.quantity * li.unit_price, 0);
+  const warrantyTotal = lineItems.reduce((s, li) => s + parseWarranty(li.warranty_price), 0);
   const [watchTaxRate, watchDeliveryFee] = watch(["tax_rate", "delivery_fee"]);
   const taxAmount = subtotal * ((parseFloat(watchTaxRate) || 0) / 100);
-  const grandTotal = subtotal + taxAmount + (parseFloat(watchDeliveryFee) || 0);
+  const grandTotal = subtotal + warrantyTotal + taxAmount + (parseFloat(watchDeliveryFee) || 0);
 
   const splitSum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
   const splitBalance = splitPayment ? grandTotal - splitSum : 0;
@@ -204,7 +209,7 @@ export default function NewInvoice() {
         delivery_city: data.delivery_city || null,
         delivery_zip: data.delivery_zip || null,
         delivery_state: data.delivery_state || null,
-        invoice_date: data.invoice_date ? new Date(data.invoice_date).toISOString() : null,
+        invoice_date: dayToServer(data.invoice_date),
         is_split_payment: splitPayment,
         payment_method: splitPayment ? null : singlePaymentMethod || null,
         payment_1_method: splitPayment ? payments[0].method || null : null,
@@ -220,7 +225,6 @@ export default function NewInvoice() {
         line_items: lineItems.map((li) => ({
           item_id: li.item_id,
           appliance_type: li.appliance_type,
-          description: li.description,
           model_number: li.model_number,
           ac_code: li.ac_code,
           kw_code: li.kw_code,
@@ -422,10 +426,8 @@ export default function NewInvoice() {
                 <thead>
                   <tr className="text-gray-500 border-b">
                     <th className="text-left pb-1 pr-2">Type</th>
-                    <th className="text-left pb-1 pr-2">Description</th>
                     <th className="text-left pb-1 pr-2">Brand</th>
                     <th className="text-left pb-1 pr-2">Model #</th>
-                    <th className="text-left pb-1 pr-2">A/C Code</th>
                     <th className="text-left pb-1 pr-2">Serial #</th>
                     <th className="text-right pb-1 pr-2">Qty</th>
                     <th className="text-right pb-1 pr-2">Unit Price</th>
@@ -454,18 +456,6 @@ export default function NewInvoice() {
                           </td>
                           <td className="pr-2 pt-2 pb-1">
                             {locked ? (
-                              <span className={`${roVal} w-52 block`}>{li.description || <span className="text-gray-300">—</span>}</span>
-                            ) : (
-                              <input
-                                value={li.description}
-                                onChange={(e) => updateLine(idx, "description", e.target.value)}
-                                className={`${inp} w-52`}
-                                placeholder="Description"
-                              />
-                            )}
-                          </td>
-                          <td className="pr-2 pt-2 pb-1">
-                            {locked ? (
                               <span className={`${roVal} w-24 block`}>{li.brand || <span className="text-gray-300">—</span>}</span>
                             ) : (
                               <input
@@ -485,18 +475,6 @@ export default function NewInvoice() {
                                 onChange={(e) => updateLine(idx, "model_number", e.target.value)}
                                 className={`${inp} w-36 font-mono`}
                                 placeholder="Model #"
-                              />
-                            )}
-                          </td>
-                          <td className="pr-2 pt-2 pb-1">
-                            {locked ? (
-                              <span className={`${roVal} w-24 block font-mono`}>{li.ac_code || <span className="text-gray-300">—</span>}</span>
-                            ) : (
-                              <input
-                                value={li.ac_code}
-                                onChange={(e) => updateLine(idx, "ac_code", e.target.value)}
-                                className={`${inp} w-24 font-mono`}
-                                placeholder="A/C"
                               />
                             )}
                           </td>
@@ -576,19 +554,8 @@ export default function NewInvoice() {
                         </tr>
                         {/* Warranty / codes sub-row */}
                         <tr key={`detail-${idx}`}>
-                          <td colSpan={10} className="pb-2 pr-2">
+                          <td colSpan={8} className="pb-2 pr-2">
                             <div className="flex flex-wrap gap-2 bg-gray-50 rounded px-2 py-1.5 text-xs items-center">
-                              <label className="flex items-center gap-1 text-gray-500">
-                                KW Code
-                                <input
-                                  value={li.kw_code}
-                                  onChange={(e) => updateLine(idx, "kw_code", e.target.value)}
-                                  className={`${inp} w-24 font-mono`}
-                                  placeholder="KW"
-                                />
-                              </label>
-
-                              <span className="border-l border-gray-200 h-4 mx-1" />
 
                               <label className="flex items-center gap-1 text-gray-500">
                                 Warranty Term
@@ -609,15 +576,6 @@ export default function NewInvoice() {
                                   }
                                   className={`${inp} w-14`}
                                   placeholder="0"
-                                />
-                              </label>
-                              <label className="flex items-center gap-1 text-gray-500">
-                                Warranty ID
-                                <input
-                                  value={li.warranty_id}
-                                  onChange={(e) => updateLine(idx, "warranty_id", e.target.value)}
-                                  className={`${inp} w-32`}
-                                  placeholder="ID"
                                 />
                               </label>
                               <label className="flex items-center gap-1 text-gray-500">
@@ -722,7 +680,7 @@ export default function NewInvoice() {
                 <span className="font-semibold text-gray-900">{fmt(grandTotal)}</span>
                 {subtotal > 0 && (
                   <span className="text-xs text-gray-400 ml-2">
-                    (Subtotal {fmt(subtotal)}{taxAmount > 0 ? ` + Tax ${fmt(taxAmount)}` : ""}{parseFloat(watchDeliveryFee) > 0 ? ` + Delivery ${fmt(parseFloat(watchDeliveryFee))}` : ""})
+                    (Subtotal {fmt(subtotal)}{warrantyTotal > 0 ? ` + Warranties ${fmt(warrantyTotal)}` : ""}{taxAmount > 0 ? ` + Tax ${fmt(taxAmount)}` : ""}{parseFloat(watchDeliveryFee) > 0 ? ` + Delivery ${fmt(parseFloat(watchDeliveryFee))}` : ""})
                   </span>
                 )}
               </div>

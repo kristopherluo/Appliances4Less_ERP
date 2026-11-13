@@ -8,7 +8,7 @@ export default function StoreModal({ store, onClose }) {
   const isEdit = !!store;
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm({
-    defaultValues: { name: "", address: "", phone: "" },
+    defaultValues: { name: "", address: "", phone: "", tax_rate: "" },
   });
 
   useEffect(() => {
@@ -16,14 +16,17 @@ export default function StoreModal({ store, onClose }) {
       name: store?.name || "",
       address: store?.address || "",
       phone: store?.phone || "",
+      tax_rate: store?.tax_rate ?? "",
     });
   }, [store]);
 
   const saveMutation = useMutation({
-    mutationFn: (data) =>
-      isEdit
-        ? api.patch(`/stores/${store.id}`, data)
-        : api.post("/stores/", data),
+    mutationFn: (data) => {
+      const payload = { ...data, tax_rate: data.tax_rate === "" ? null : parseFloat(data.tax_rate) };
+      return isEdit
+        ? api.patch(`/stores/${store.id}`, payload)
+        : api.post("/stores/", payload);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["stores"] });
       onClose();
@@ -66,6 +69,18 @@ export default function StoreModal({ store, onClose }) {
               className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               placeholder="(555) 000-0000"
             />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Default Tax Rate (%)</label>
+            <input
+              {...register("tax_rate")}
+              type="number"
+              min="0"
+              step="0.01"
+              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="e.g. 9.25"
+            />
+            <p className="text-xs text-gray-400 mt-0.5">Filled in automatically on new invoices. Can still be changed per invoice.</p>
           </div>
           {saveMutation.isError && (
             <p className="text-red-500 text-xs">

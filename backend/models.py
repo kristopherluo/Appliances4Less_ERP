@@ -12,6 +12,7 @@ class Store(Base):
     address = Column(String(255))
     phone = Column(String(50))
     fax = Column(String(50))
+    tax_rate = Column(Float, nullable=True)            # default tax %, prefilled on new invoices
 
     users = relationship("User", back_populates="store")
     items = relationship("Item", back_populates="store")
@@ -112,6 +113,11 @@ class Invoice(Base):
     payment_2_amount = Column(Float, nullable=True)
     payment_3_method = Column(String(50), nullable=True)
     payment_3_amount = Column(Float, nullable=True)
+
+    # Order state: NULL = active, else "canceled" | "returned"
+    status = Column(String(20), nullable=True)
+    # ready_for_pickup | ready_for_delivery | picked_up_delivered
+    fulfillment_status = Column(String(30), nullable=True)
 
     # Other
     payment_method = Column(String(50), nullable=True)

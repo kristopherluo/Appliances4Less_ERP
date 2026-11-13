@@ -4,20 +4,24 @@ import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { useStore } from "../context/StoreContext";
 import InvoiceEditModal from "../components/InvoiceEditModal";
+import {
+  PAYMENT_METHODS, FULFILLMENT_OPTIONS, STATUS_OPTIONS, invoiceBalance, invoiceStatusLabel,
+} from "../lib/constants";
+import { monthRangeCentral, invoiceDay, formatDay } from "../lib/dates";
 
 export default function InvoiceList() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { stores } = useStore();
 
-  const now = new Date();
-  const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const toDateStr = (d) => d.toISOString().slice(0, 10);
-
-  const [startDate, setStartDate] = useState(toDateStr(firstOfMonth));
-  const [endDate, setEndDate] = useState(toDateStr(now));
+  const initialRange = monthRangeCentral();
+  const [startDate, setStartDate] = useState(initialRange.start);
+  const [endDate, setEndDate] = useState(initialRange.end);
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [selectedSalesman, setSelectedSalesman] = useState("");
+  const [selectedPayment, setSelectedPayment] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("");
+  const [selectedFulfillment, setSelectedFulfillment] = useState("");
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [editInvoice, setEditInvoice] = useState(null);
 
@@ -43,6 +47,11 @@ export default function InvoiceList() {
     },
   });
 
+  const fulfillmentMutation = useMutation({
+    mutationFn: ({ id, value }) => api.patch(`/invoices/${id}`, { fulfillment_status: value || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
+  });
+
   function parseWarrantyPrice(wp) {
     if (!wp) return 0;
     try { return parseFloat(String(wp).replace("$", "").trim()) || 0; } catch { return 0; }
@@ -53,11 +62,22 @@ export default function InvoiceList() {
       .filter((inv) => !selectedStoreId || inv.store_id === Number(selectedStoreId))
       .filter((inv) => !selectedSalesman || inv.salesman?.toLowerCase() === selectedSalesman.toLowerCase())
       .filter((inv) => {
-        const d = new Date(inv.created_at);
-        return d >= new Date(startDate) && d <= new Date(endDate + "T23:59:59");
-      }),
-    [invoices, selectedStoreId, selectedSalesman, startDate, endDate]
+        const day = invoiceDay(inv);
+        return day >= startDate && day <= endDate;
+      })
+      .filter((inv) => {
+        if (!selectedPayment) return true;
+        const methods = inv.is_split_payment
+          ? [inv.payment_1_method, inv.payment_2_method, inv.payment_3_method]
+          : [inv.payment_method];
+        return methods.includes(selectedPayment);
+      })
+      .filter((inv) => !selectedStatus || invoiceStatusLabel(inv) === selectedStatus)
+      .filter((inv) => !selectedFulfillment || inv.fulfillment_status === selectedFulfillment),
+    [invoices, selectedStoreId, selectedSalesman, selectedPayment, selectedStatus, selectedFulfillment, startDate, endDate]
   );
+
+  const counted = useMemo(() => filtered.filter((inv) => !inv.status), [filtered]);
 
   // Unique salesmen from all (unfiltered) invoices for the dropdown
   const salesmenOptions = useMemo(() => {
@@ -71,14 +91,14 @@ export default function InvoiceList() {
   }, [invoices]);
 
   const stats = useMemo(() => {
-    const orders = filtered.length;
-    const totalRevenue = filtered.reduce((s, inv) => s + Number(inv.total_amount), 0);
-    const totalTax = filtered.reduce((s, inv) => s + Number(inv.tax_amount), 0);
+    const orders = counted.length;
+    const totalRevenue = counted.reduce((s, inv) => s + Number(inv.total_amount), 0);
+    const totalTax = counted.reduce((s, inv) => s + Number(inv.tax_amount), 0);
     const preTax = totalRevenue - totalTax;
 
     let totalProfit = 0;
     let hasProfitData = false;
-    for (const inv of filtered) {
+    for (const inv of counted) {
       const knownCosts = (inv.line_items ?? []).filter((li) => li.cost_price != null);
       if (knownCosts.length > 0) {
         hasProfitData = true;
@@ -88,13 +108,12 @@ export default function InvoiceList() {
     }
 
     return { orders, preTax, totalTax, totalRevenue, totalProfit, hasProfitData };
-  }, [filtered]);
+  }, [counted]);
 
   const fmt = (n) =>
     `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const fmtDate = (s) =>
-    new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const fmtDate = (inv) => formatDay(invoiceDay(inv));
 
   function exportCSV() {
     const headers = [
@@ -104,7 +123,7 @@ export default function InvoiceList() {
       "Model Number", "Invoice Date", "Delivery Date",
     ];
     const rows = [headers];
-    for (const inv of filtered) {
+    for (const inv of counted) {
       for (const li of inv.line_items ?? []) {
         if (li.warranty_provider !== "ONPOINT") continue;
         const addr1 = [
@@ -113,9 +132,7 @@ export default function InvoiceList() {
             ? `${inv.delivery_city}, ${inv.delivery_state} ${inv.delivery_zip || ""}`.trim()
             : inv.delivery_city || "",
         ].filter(Boolean).join(", ");
-        const invDate = inv.invoice_date
-          ? new Date(inv.invoice_date).toLocaleDateString("en-US")
-          : fmtDate(inv.created_at);
+        const invDate = formatDay(invoiceDay(inv), { month: "numeric", day: "numeric", year: "numeric" });
         rows.push([
           addr1, inv.delivery_street || "", inv.delivery_city || "",
           inv.delivery_state || "", inv.delivery_zip || "", inv.customer_email || "",
@@ -140,7 +157,7 @@ export default function InvoiceList() {
   }
 
   const colHeaders = [
-    "Invoice #", "Date", "Items", "Grand Total", "Customer", "Salesman",
+    "Invoice #", "Status", "Fulfillment", "Date", "Items", "Grand Total", "Customer", "Salesman",
     "Warranty", "Warranty Provider", "P1 Amount", "P1 Method", "P2 Amount", "P2 Method", "Balance", "",
   ];
 
@@ -180,6 +197,36 @@ export default function InvoiceList() {
           <option value="">All Salesmen</option>
           {salesmenOptions.map((name) => (
             <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        <select
+          value={selectedPayment}
+          onChange={(e) => setSelectedPayment(e.target.value)}
+          className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        >
+          <option value="">All Payment Types</option>
+          {PAYMENT_METHODS.map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        <select
+          value={selectedStatus}
+          onChange={(e) => setSelectedStatus(e.target.value)}
+          className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        >
+          <option value="">All Statuses</option>
+          {STATUS_OPTIONS.map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+        <select
+          value={selectedFulfillment}
+          onChange={(e) => setSelectedFulfillment(e.target.value)}
+          className="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        >
+          <option value="">All Pick up / Delivery</option>
+          {FULFILLMENT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
         <div className="flex-1" />
@@ -250,14 +297,9 @@ export default function InvoiceList() {
                 const providers = [...new Set(
                   (inv.line_items ?? []).map((li) => li.warranty_provider).filter(Boolean)
                 )].join(", ");
-                const totalPaid = inv.is_split_payment
-                  ? [inv.payment_1_amount, inv.payment_2_amount, inv.payment_3_amount]
-                      .reduce((s, a) => s + (a ?? 0), 0)
-                  : Number(inv.total_amount);
-                const balance = Math.max(Number(inv.total_amount) - totalPaid, 0);
-                const displayDate = inv.invoice_date
-                  ? fmtDate(inv.invoice_date)
-                  : fmtDate(inv.created_at);
+                const balance = invoiceBalance(inv);
+                const statusLabel = invoiceStatusLabel(inv);
+                const displayDate = fmtDate(inv);
                 const firstName = (inv.customer_name || "").split(" ")[0];
                 const lastName = (inv.customer_name || "").split(" ").slice(1).join(" ");
                 const customerDisplay = [firstName, lastName].filter(Boolean).join(" ");
@@ -280,6 +322,31 @@ export default function InvoiceList() {
                           #{String(inv.id).padStart(5, "0")}
                         </button>
                       </div>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        statusLabel === "Completed" ? "bg-green-50 text-green-700"
+                        : statusLabel === "Partial paid" ? "bg-amber-50 text-amber-700"
+                        : "bg-gray-100 text-gray-500"
+                      }`}>
+                        {statusLabel}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {inv.status ? (
+                        <span className="text-gray-300">—</span>
+                      ) : (
+                        <select
+                          value={inv.fulfillment_status || ""}
+                          onChange={(e) => fulfillmentMutation.mutate({ id: inv.id, value: e.target.value })}
+                          className="border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300"
+                        >
+                          <option value="">—</option>
+                          {FULFILLMENT_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{displayDate}</td>
                     <td className="px-3 py-2.5 text-gray-500">{inv.line_items?.length ?? 0}</td>
@@ -306,15 +373,9 @@ export default function InvoiceList() {
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <button
                         onClick={() => setEditInvoice(inv)}
-                        className="text-blue-600 hover:underline text-xs mr-3"
+                        className="text-blue-600 hover:underline text-xs"
                       >
                         Edit
-                      </button>
-                      <button
-                        onClick={() => window.open(`/api/invoices/${inv.id}/pdf`, "_blank")}
-                        className="text-gray-500 hover:underline text-xs"
-                      >
-                        PDF
                       </button>
                     </td>
                   </tr>,
@@ -324,7 +385,7 @@ export default function InvoiceList() {
                         <table className="w-full text-xs">
                           <thead>
                             <tr className="text-gray-500 uppercase tracking-wide border-b border-gray-200">
-                              <th className="pb-1 text-left font-semibold pr-4">Description</th>
+                              <th className="pb-1 text-left font-semibold pr-4">Type</th>
                               <th className="pb-1 text-left font-semibold pr-4">A/C Code</th>
                               <th className="pb-1 text-left font-semibold pr-4">Model #</th>
                               <th className="pb-1 text-left font-semibold pr-4">Serial #</th>
@@ -336,7 +397,7 @@ export default function InvoiceList() {
                           <tbody className="divide-y divide-gray-100">
                             {(inv.line_items ?? []).map((li) => (
                               <tr key={li.id} className="text-gray-700">
-                                <td className="py-1.5 pr-4">{li.description}</td>
+                                <td className="py-1.5 pr-4">{li.appliance_type || "—"}</td>
                                 <td className="py-1.5 pr-4 font-mono text-gray-500">{li.ac_code || "—"}</td>
                                 <td className="py-1.5 pr-4 font-mono text-gray-500">{li.model_number || "—"}</td>
                                 <td className="py-1.5 pr-4 font-mono text-gray-500">{li.mfr_serial || "—"}</td>
@@ -364,6 +425,7 @@ export default function InvoiceList() {
           onSaved={() => {
             setEditInvoice(null);
             qc.invalidateQueries({ queryKey: ["invoices"] });
+            qc.invalidateQueries({ queryKey: ["items"] });
           }}
           onDelete={(id) => deleteMutation.mutate(id)}
         />

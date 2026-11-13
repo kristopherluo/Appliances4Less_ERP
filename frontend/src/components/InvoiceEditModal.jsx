@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import api from "../lib/api";
-
-const PAYMENT_METHODS = ["Cash", "Debit", "Credit", "Check", "Financing", "Other"];
+import { paymentMethodOptions, invoiceStatusLabel } from "../lib/constants";
+import { invoiceDay, dayToServer, isOlderThan24h } from "../lib/dates";
 const WARRANTY_PROVIDERS = ["ONPOINT", "CPS", "MANUFACTURE", "MANUFACTURE+ONPOINT", "STORE", "FRONTIER"];
 
 const fieldCls = "w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400";
@@ -58,11 +58,7 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
       customer_phone: initialInvoice.customer_phone || "",
       customer_email: initialInvoice.customer_email || "",
       salesman: initialInvoice.salesman || "",
-      invoice_date: initialInvoice.invoice_date
-        ? new Date(initialInvoice.invoice_date).toISOString().slice(0, 10)
-        : initialInvoice.created_at
-        ? new Date(initialInvoice.created_at).toISOString().slice(0, 10)
-        : "",
+      invoice_date: invoiceDay(initialInvoice),
       delivery_street: initialInvoice.delivery_street || "",
       delivery_city: initialInvoice.delivery_city || "",
       delivery_state: initialInvoice.delivery_state || "",
@@ -78,7 +74,6 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
       ...prev,
       [li.id]: {
         appliance_type: li.appliance_type || "",
-        description: li.description || "",
         model_number: li.model_number || "",
         ac_code: li.ac_code || "",
         kw_code: li.kw_code || "",
@@ -142,7 +137,6 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
       const { data } = await api.post(`/invoices/${invoice.id}/line-items`, {
         item_id: item.id,
         appliance_type: item.appliance_type || "",
-        description: item.name,
         model_number: item.model_number || "",
         ac_code: item.ac_code || "",
         kw_code: item.kw_code || "",
@@ -169,7 +163,6 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
       const { data } = await api.post(`/invoices/${invoice.id}/line-items`, {
         item_id: null,
         appliance_type: "",
-        description: "",
         model_number: "",
         ac_code: "",
         kw_code: "",
@@ -193,13 +186,39 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
     }
   }
 
+  async function statusAction(action) {
+    const label = { cancel: "cancel this order", return: "mark this order as returned", revert: "revert this invoice" }[action];
+    const note = action === "revert"
+      ? " Its items will be marked sold again."
+      : " Its items will go back to inventory and the invoice will be kept.";
+    if (!window.confirm(`Are you sure you want to ${label}?${note}`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      await api.post(`/invoices/${invoice.id}/${action}`);
+      onSaved();
+    } catch (e) {
+      setError(e.response?.data?.detail || "Action failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleDelete() {
+    let msg = "Invoices should not be deleted. Are you sure you want to delete this invoice? Its items will be returned to inventory and the invoice will be permanently removed.";
+    if (isOlderThan24h(invoice.created_at)) {
+      msg += "\n\nThis invoice was created more than 24 hours ago.";
+    }
+    if (window.confirm(msg)) onDelete(invoice.id);
+  }
+
   async function onSubmit(data) {
     setSaving(true);
     setError("");
     try {
       const { data: updated } = await api.patch(`/invoices/${invoice.id}`, {
         ...data,
-        invoice_date: data.invoice_date ? new Date(data.invoice_date).toISOString() : null,
+        invoice_date: dayToServer(data.invoice_date),
         is_split_payment: splitPayment,
         payment_method: splitPayment ? null : singleMethod || null,
         payment_1_method: splitPayment ? payments[0].method || null : null,
@@ -223,6 +242,10 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
     ? [payments[0].amount, payments[1].amount, payments[2].amount].reduce((s, a) => s + (parseFloat(a) || 0), 0)
     : invoice.total_amount;
   const balance = Math.max(Number(invoice.total_amount) - totalPaid, 0);
+  const warrantyTotal = (invoice.line_items ?? []).reduce(
+    (s, li) => s + (parseFloat(String(li.warranty_price || "").replace("$", "")) || 0), 0
+  );
+  const closed = !!invoice.status;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -234,6 +257,12 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
 
         <form id="invoice-edit-form" onSubmit={handleSubmit(onSubmit)}>
           <div className="px-6 py-5 space-y-5">
+
+            {closed && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600">
+                This invoice is <span className="font-semibold">{invoiceStatusLabel(invoice)}</span>. Its items are back in inventory. Revert it to edit the items.
+              </div>
+            )}
 
             {/* ── CUSTOMER ── */}
             <div className="bg-white border border-gray-200 rounded-lg p-5">
@@ -318,10 +347,8 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
                     <thead>
                       <tr className="text-gray-500 border-b">
                         <th className="text-left pb-1 pr-2">Type</th>
-                        <th className="text-left pb-1 pr-2">Description</th>
                         <th className="text-left pb-1 pr-2">Brand</th>
                         <th className="text-left pb-1 pr-2">Model #</th>
-                        <th className="text-left pb-1 pr-2">A/C Code</th>
                         <th className="text-left pb-1 pr-2">Serial #</th>
                         <th className="text-right pb-1 pr-2">Qty</th>
                         <th className="text-right pb-1 pr-2">Unit Price</th>
@@ -346,13 +373,6 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
                               </td>
                               <td className="pr-2 pt-2 pb-1">
                                 {editing ? (
-                                  <input value={e.description} onChange={(ev) => updateEditLine(li.id, "description", ev.target.value)} className={`${inp} w-40`} placeholder="Description" />
-                                ) : (
-                                  <span className={`${roVal} w-40 block`}>{li.description || <span className="text-gray-300">—</span>}</span>
-                                )}
-                              </td>
-                              <td className="pr-2 pt-2 pb-1">
-                                {editing ? (
                                   <input value={e.brand} onChange={(ev) => updateEditLine(li.id, "brand", ev.target.value)} className={`${inp} w-24`} placeholder="Brand" />
                                 ) : (
                                   <span className={`${roVal} w-24 block`}>{li.brand || <span className="text-gray-300">—</span>}</span>
@@ -363,13 +383,6 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
                                   <input value={e.model_number} onChange={(ev) => updateEditLine(li.id, "model_number", ev.target.value)} className={`${inp} w-28 font-mono`} placeholder="Model #" />
                                 ) : (
                                   <span className={`${roVal} w-28 block font-mono`}>{li.model_number || <span className="text-gray-300">—</span>}</span>
-                                )}
-                              </td>
-                              <td className="pr-2 pt-2 pb-1">
-                                {editing ? (
-                                  <input value={e.ac_code} onChange={(ev) => updateEditLine(li.id, "ac_code", ev.target.value)} className={`${inp} w-20 font-mono`} placeholder="A/C" />
-                                ) : (
-                                  <span className={`${roVal} w-20 block font-mono`}>{li.ac_code || <span className="text-gray-300">—</span>}</span>
                                 )}
                               </td>
                               <td className="pr-2 pt-2 pb-1">
@@ -413,16 +426,8 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
 
                             {/* Warranty / codes sub-row — always visible */}
                             <tr key={`detail-${li.id}`}>
-                              <td colSpan={10} className="pb-2 pr-2">
+                              <td colSpan={8} className="pb-2 pr-2">
                                 <div className="flex flex-wrap gap-2 bg-gray-50 rounded px-2 py-1.5 text-xs items-center">
-                                  <label className="flex items-center gap-1 text-gray-500">KW Code
-                                    {editing ? (
-                                      <input value={e.kw_code} onChange={(ev) => updateEditLine(li.id, "kw_code", ev.target.value)} className={`${inp} w-24 font-mono`} placeholder="KW" />
-                                    ) : (
-                                      <span className="font-mono text-gray-700">{li.kw_code || "—"}</span>
-                                    )}
-                                  </label>
-                                  <span className="border-l border-gray-200 h-4 mx-1" />
                                   <label className="flex items-center gap-1 text-gray-500">Warranty Term
                                     {editing ? (
                                       <input value={e.warranty_term} onChange={(ev) => updateEditLine(li.id, "warranty_term", ev.target.value)} className={`${inp} w-20`} placeholder="1year" />
@@ -435,13 +440,6 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
                                       <input value={(e.warranty_price || "").replace(/^\$/, "")} onChange={(ev) => updateEditLine(li.id, "warranty_price", `$${ev.target.value}`)} className={`${inp} w-14`} placeholder="0" />
                                     ) : (
                                       <span className="text-gray-700">{li.warranty_price || "—"}</span>
-                                    )}
-                                  </label>
-                                  <label className="flex items-center gap-1 text-gray-500">ID
-                                    {editing ? (
-                                      <input value={e.warranty_id} onChange={(ev) => updateEditLine(li.id, "warranty_id", ev.target.value)} className={`${inp} w-32`} placeholder="ID" />
-                                    ) : (
-                                      <span className="text-gray-700">{li.warranty_id || "—"}</span>
                                     )}
                                   </label>
                                   <label className="flex items-center gap-1 text-gray-500">Provider
@@ -470,7 +468,8 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
 
               {/* Live totals */}
               <div className="text-xs text-gray-500 mt-3">
-                Subtotal: <span className="font-medium text-gray-800">{fmt(invoice.subtotal)}</span>
+                Subtotal: <span className="font-medium text-gray-800">{fmt(invoice.subtotal - warrantyTotal)}</span>
+                {warrantyTotal > 0 && <> · Warranties: <span className="font-medium text-gray-800">{fmt(warrantyTotal)}</span></>}
                 {invoice.delivery_fee > 0 && <> · Delivery: <span className="font-medium text-gray-800">{fmt(invoice.delivery_fee)}</span></>}
                 {invoice.tax_amount > 0 && <> · Tax: <span className="font-medium text-gray-800">{fmt(invoice.tax_amount)}</span></>}
                 <> · <span className="font-semibold text-green-700">Total: {fmt(invoice.total_amount)}</span></>
@@ -529,7 +528,7 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
                   <label className="block text-xs font-medium text-gray-600 mb-1">Payment Method</label>
                   <select value={singleMethod} onChange={(e) => setSingleMethod(e.target.value)} className={fieldCls}>
                     <option value="">— Select —</option>
-                    {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    {paymentMethodOptions(singleMethod).map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
               ) : (
@@ -543,7 +542,7 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
                         className={fieldCls}
                       >
                         <option value="">— Select —</option>
-                        {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                        {paymentMethodOptions(p.method).map((m) => <option key={m} value={m}>{m}</option>)}
                       </select>
                       <input
                         type="text"
@@ -564,17 +563,25 @@ export default function InvoiceEditModal({ invoice: initialInvoice, onClose, onS
         </form>
 
         <div className="px-6 py-4 border-t border-gray-100 flex justify-between items-center sticky bottom-0 bg-white">
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm("Delete this invoice? Inventory items will be restored to in-stock.")) {
-                onDelete(invoice.id);
-              }
-            }}
-            className="px-4 py-2 text-sm bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100"
-          >
-            Delete Invoice
-          </button>
+          <div className="flex gap-2">
+            {closed ? (
+              <button type="button" disabled={saving} onClick={() => statusAction("revert")} className="px-4 py-2 text-sm border border-blue-300 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50">
+                Revert {invoice.status === "returned" ? "Return" : "Cancelation"}
+              </button>
+            ) : (
+              <>
+                <button type="button" disabled={saving} onClick={() => statusAction("cancel")} className="px-4 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50">
+                  Order Canceled
+                </button>
+                <button type="button" disabled={saving} onClick={() => statusAction("return")} className="px-4 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-50">
+                  Order Returned
+                </button>
+              </>
+            )}
+            <button type="button" onClick={handleDelete} className="px-4 py-2 text-sm bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100">
+              Delete Invoice
+            </button>
+          </div>
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50">
               Cancel

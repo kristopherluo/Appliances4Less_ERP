@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr
 
 
@@ -9,6 +9,7 @@ class StoreBase(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     fax: Optional[str] = None
+    tax_rate: Optional[float] = None
 
 
 class StoreCreate(StoreBase):
@@ -20,6 +21,7 @@ class StoreUpdate(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     fax: Optional[str] = None
+    tax_rate: Optional[float] = None
 
 
 class StoreOut(StoreBase):
@@ -125,7 +127,7 @@ class ItemOut(BaseModel):
 class InvoiceItemCreate(BaseModel):
     item_id: Optional[int] = None
     appliance_type: Optional[str] = None
-    description: str
+    description: Optional[str] = ""
     model_number: Optional[str] = None
     ac_code: Optional[str] = None
     kw_code: Optional[str] = None
@@ -143,7 +145,7 @@ class InvoiceItemOut(BaseModel):
     id: int
     item_id: Optional[int]
     appliance_type: Optional[str]
-    description: str
+    description: Optional[str]
     model_number: Optional[str]
     ac_code: Optional[str]
     kw_code: Optional[str]
@@ -226,6 +228,9 @@ class InvoiceUpdate(BaseModel):
     notes: Optional[str] = None
     has_non_appliance_services: Optional[bool] = None
     non_appliance_description: Optional[str] = None
+    fulfillment_status: Optional[
+        Literal["ready_for_pickup", "ready_for_delivery", "picked_up_delivered"]
+    ] = None
 
 
 class InvoiceOut(BaseModel):
@@ -259,6 +264,8 @@ class InvoiceOut(BaseModel):
     notes: Optional[str]
     has_non_appliance_services: bool
     non_appliance_description: Optional[str]
+    status: Optional[str]
+    fulfillment_status: Optional[str]
     created_at: datetime
     line_items: list[InvoiceItemOut]
     model_config = {"from_attributes": True}

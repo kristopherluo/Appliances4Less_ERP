@@ -5,19 +5,19 @@ from sqlalchemy.orm import Session
 from database import get_db
 import models, schemas
 from pdf import generate_invoice_pdf
+from pricing import parse_warranty_price as _parse_warranty_price, compute_totals
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
 SYSTEM_USER_ID = 1
 
 
-def _parse_warranty_price(wp: str | None) -> float:
-    if not wp:
-        return 0.0
-    try:
-        return float(str(wp).replace("$", "").strip())
-    except (ValueError, TypeError):
-        return 0.0
+def _require_active(invoice: models.Invoice) -> None:
+    if invoice.status:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invoice is {invoice.status}. Revert it before editing items.",
+        )
 
 
 @router.get("/", response_model=list[schemas.InvoiceOut])
@@ -30,11 +30,7 @@ def list_invoices(store_id: int | None = None, db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.InvoiceOut, status_code=status.HTTP_201_CREATED)
 def create_invoice(data: schemas.InvoiceCreate, db: Session = Depends(get_db)):
-    item_subtotal = sum(li.quantity * li.unit_price for li in data.line_items)
-    warranty_subtotal = sum(_parse_warranty_price(li.warranty_price) for li in data.line_items)
-    subtotal = item_subtotal + warranty_subtotal
-    tax_amount = round(subtotal * (data.tax_rate / 100), 2)
-    total = round(subtotal + tax_amount + data.delivery_fee, 2)
+    totals = compute_totals(data.line_items, data.tax_rate, data.delivery_fee)
 
     # Build combined delivery_address string from structured parts
     city_state_zip = f"{data.delivery_city or ''}, {data.delivery_state or ''} {data.delivery_zip or ''}".strip(", ")
@@ -64,9 +60,9 @@ def create_invoice(data: schemas.InvoiceCreate, db: Session = Depends(get_db)):
         payment_3_amount=data.payment_3_amount,
         tax_rate=data.tax_rate,
         delivery_fee=data.delivery_fee,
-        subtotal=subtotal,
-        tax_amount=tax_amount,
-        total_amount=total,
+        subtotal=totals["subtotal"],
+        tax_amount=totals["tax_amount"],
+        total_amount=totals["total_amount"],
         notes=data.notes,
         has_non_appliance_services=data.has_non_appliance_services,
         non_appliance_description=data.non_appliance_description,
@@ -84,7 +80,7 @@ def create_invoice(data: schemas.InvoiceCreate, db: Session = Depends(get_db)):
             invoice_id=invoice.id,
             item_id=li.item_id,
             appliance_type=li.appliance_type,
-            description=li.description,
+            description=li.description or "",
             model_number=li.model_number,
             ac_code=li.ac_code,
             kw_code=li.kw_code,
@@ -143,6 +139,8 @@ def update_invoice(invoice_id: int, data: schemas.InvoiceUpdate, db: Session = D
         raise HTTPException(status_code=404, detail="Invoice not found")
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(invoice, field, value)
+    if any(f in data.model_dump(exclude_unset=True) for f in ("tax_rate", "delivery_fee")):
+        _recalculate_invoice(invoice)
     # Rebuild delivery_address string if structured fields changed
     if any(f in data.model_dump(exclude_unset=True) for f in ("delivery_street", "delivery_city", "delivery_state", "delivery_zip")):
         city_state_zip = f"{invoice.delivery_city or ''}, {invoice.delivery_state or ''} {invoice.delivery_zip or ''}".strip(", ")
@@ -154,14 +152,10 @@ def update_invoice(invoice_id: int, data: schemas.InvoiceUpdate, db: Session = D
 
 
 def _recalculate_invoice(invoice: models.Invoice) -> None:
-    """Recalculate subtotal, tax_amount, total_amount from current line items."""
-    item_sub = sum(li.quantity * li.unit_price for li in invoice.line_items)
-    warranty_sub = sum(_parse_warranty_price(li.warranty_price) for li in invoice.line_items)
-    subtotal = item_sub + warranty_sub
-    tax_amount = round(subtotal * ((invoice.tax_rate or 0) / 100), 2)
-    invoice.subtotal = subtotal
-    invoice.tax_amount = tax_amount
-    invoice.total_amount = round(subtotal + tax_amount + (invoice.delivery_fee or 0), 2)
+    totals = compute_totals(invoice.line_items, invoice.tax_rate, invoice.delivery_fee)
+    invoice.subtotal = totals["subtotal"]
+    invoice.tax_amount = totals["tax_amount"]
+    invoice.total_amount = totals["total_amount"]
 
 
 @router.patch("/{invoice_id}/line-items/{line_item_id}", response_model=schemas.InvoiceOut)
@@ -172,6 +166,7 @@ def update_line_item(
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    _require_active(invoice)
     line = db.query(models.InvoiceItem).filter(
         models.InvoiceItem.id == line_item_id,
         models.InvoiceItem.invoice_id == invoice_id,
@@ -193,6 +188,7 @@ def delete_line_item(invoice_id: int, line_item_id: int, db: Session = Depends(g
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    _require_active(invoice)
     line = db.query(models.InvoiceItem).filter(
         models.InvoiceItem.id == line_item_id,
         models.InvoiceItem.invoice_id == invoice_id,
@@ -216,6 +212,7 @@ def add_line_item(invoice_id: int, data: schemas.InvoiceItemCreate, db: Session 
     invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    _require_active(invoice)
     item_cost = None
     if data.item_id:
         inv_item = db.query(models.Item).filter(models.Item.id == data.item_id).first()
@@ -226,7 +223,7 @@ def add_line_item(invoice_id: int, data: schemas.InvoiceItemCreate, db: Session 
         invoice_id=invoice_id,
         item_id=data.item_id,
         appliance_type=data.appliance_type,
-        description=data.description,
+        description=data.description or "",
         model_number=data.model_number,
         ac_code=data.ac_code,
         kw_code=data.kw_code,
@@ -255,11 +252,72 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
+    if not invoice.status:
+        _restore_stock(invoice, db)
+
+    db.delete(invoice)
+    db.commit()
+
+
+def _restore_stock(invoice: models.Invoice, db: Session) -> None:
     for line in invoice.line_items:
         if line.item_id:
             item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
             if item:
                 item.is_in_stock = True
 
-    db.delete(invoice)
+
+@router.post("/{invoice_id}/cancel", response_model=schemas.InvoiceOut)
+def cancel_invoice(invoice_id: int, db: Session = Depends(get_db)):
+    return _close_invoice(invoice_id, "canceled", db)
+
+
+@router.post("/{invoice_id}/return", response_model=schemas.InvoiceOut)
+def return_invoice(invoice_id: int, db: Session = Depends(get_db)):
+    return _close_invoice(invoice_id, "returned", db)
+
+
+def _close_invoice(invoice_id: int, new_status: str, db: Session) -> models.Invoice:
+    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    _require_active(invoice)
+    _restore_stock(invoice, db)
+    invoice.status = new_status
+    invoice.fulfillment_status = None
     db.commit()
+    db.refresh(invoice)
+    return invoice
+
+
+@router.post("/{invoice_id}/revert", response_model=schemas.InvoiceOut)
+def revert_invoice(invoice_id: int, db: Session = Depends(get_db)):
+    invoice = db.query(models.Invoice).filter(models.Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if not invoice.status:
+        raise HTTPException(status_code=409, detail="Invoice is not canceled or returned")
+
+    items = []
+    unavailable = []
+    for line in invoice.line_items:
+        if not line.item_id:
+            continue
+        item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
+        if not item or not item.is_in_stock:
+            label = " ".join(p for p in (line.appliance_type, line.brand, line.model_number) if p)
+            unavailable.append(label or line.ac_code or f"item {line.item_id}")
+        else:
+            items.append(item)
+    if unavailable:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot revert. No longer in inventory: " + ", ".join(unavailable),
+        )
+
+    for item in items:
+        item.is_in_stock = False
+    invoice.status = None
+    db.commit()
+    db.refresh(invoice)
+    return invoice
