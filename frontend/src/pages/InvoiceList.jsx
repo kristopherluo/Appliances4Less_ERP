@@ -269,12 +269,12 @@ export default function InvoiceList() {
 
       {/* Table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[75vh]">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
               <tr>
-                {colHeaders.map((h) => (
-                  <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
+                {colHeaders.map((h, i, arr) => (
+                  <th key={h || "actions"} className={`px-3 py-2.5 text-left font-semibold whitespace-nowrap sticky top-0 z-20 bg-gray-50 ${i === 0 ? "left-0 z-30 shadow-[inset_-1px_0_0_#e5e7eb]" : i === arr.length - 1 ? "right-0 z-30 shadow-[inset_1px_0_0_#e5e7eb]" : ""}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -305,8 +305,8 @@ export default function InvoiceList() {
                 const customerDisplay = [firstName, lastName].filter(Boolean).join(" ");
 
                 return [
-                  <tr key={inv.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2.5 font-mono text-blue-700 font-semibold">
+                  <tr key={inv.id} className="group hover:bg-gray-50">
+                    <td className="px-3 py-2.5 font-mono text-blue-700 font-semibold sticky left-0 z-10 bg-white group-hover:bg-gray-50 shadow-[inset_-1px_0_0_#e5e7eb]">
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => toggleExpand(inv.id)}
@@ -370,7 +370,7 @@ export default function InvoiceList() {
                     <td className={`px-3 py-2.5 font-medium ${balance > 0.01 ? "text-amber-600" : "text-gray-400"}`}>
                       {balance > 0.01 ? fmt(balance) : "—"}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
+                    <td className="px-3 py-2.5 whitespace-nowrap sticky right-0 z-10 bg-white group-hover:bg-gray-50 shadow-[inset_1px_0_0_#e5e7eb]">
                       <button
                         onClick={() => setEditInvoice(inv)}
                         className="text-blue-600 hover:underline text-xs"

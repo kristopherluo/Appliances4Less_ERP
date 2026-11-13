@@ -219,12 +219,12 @@ export default function Inventory() {
 
       {/* Table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[75vh]">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
               <tr>
-                {["A/C Code", "Brand", "Type", "Details", "Model #", "Serial #", "Grade", "Location", "Cost", "MSRP", "In Stock", ""].map((h) => (
-                  <th key={h} className="px-3 py-2.5 text-left whitespace-nowrap font-semibold">{h}</th>
+                {["A/C Code", "Brand", "Type", "Details", "Model #", "Serial #", "Grade", "Location", "Cost", "MSRP", "In Stock", ""].map((h, i, arr) => (
+                  <th key={h || "actions"} className={`px-3 py-2.5 text-left whitespace-nowrap font-semibold sticky top-0 z-20 bg-gray-50 ${i === arr.length - 1 ? "right-0 z-30 shadow-[inset_1px_0_0_#e5e7eb]" : ""}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -236,7 +236,7 @@ export default function Inventory() {
                 <tr><td colSpan={12} className="px-4 py-8 text-center text-gray-400">No items found</td></tr>
               )}
               {filtered.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50">
+                <tr key={item.id} className="group hover:bg-gray-50">
                   <td className="px-3 py-2 font-mono text-xs text-gray-500">{item.ac_code || "—"}</td>
                   <td className="px-3 py-2 font-medium">{item.brand || "—"}</td>
                   <td className="px-3 py-2 text-gray-600">{item.appliance_type || "—"}</td>
@@ -255,7 +255,7 @@ export default function Inventory() {
                       {item.is_in_stock ? "Yes" : "No"}
                     </span>
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  <td className="px-3 py-2 whitespace-nowrap sticky right-0 z-10 bg-white group-hover:bg-gray-50 shadow-[inset_1px_0_0_#e5e7eb]">
                     <button onClick={() => { setEditItem(item); setShowModal(true); }} className="text-blue-600 hover:underline text-xs">Edit</button>
                   </td>
                 </tr>
